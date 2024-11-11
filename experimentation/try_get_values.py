@@ -30,7 +30,7 @@ output_dir = os.path.join(path_one_drive_dir,
 api = EnergyPlusAPI(running_as_python_plugin=True, path_to_ep_folder=energyplus_dir)
 
 # Set the surface name you want to monitor
-surface_name = "room_1_bf4c06dc..Face0"
+surface_name = "Face: room_1_bf4c06dc..Face0"
 
 # Initialize a list to store temperature data
 surface_temps = []
@@ -80,7 +80,7 @@ api.runtime.run_energyplus(state,
 # Plotting the collected surface temperature after the simulation
 plt.figure(figsize=(10, 6))
 times = list(range(len(surface_temps)))  # Assuming each timestep corresponds to an index in the list
-plt.plot(time_steps, surface_temps, label=surface_name)
+plt.plot(times, surface_temps, label=surface_name)
 
 plt.xlabel('Time Steps')
 plt.ylabel('Surface Temperature (°C)')
