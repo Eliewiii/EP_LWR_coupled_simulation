@@ -67,6 +67,7 @@ def my_callback(state):
 state = api.state_manager.new_state()
 api.runtime._set_energyplus_root_directory(state, path := energyplus_dir)
 api.runtime.callback_end_zone_timestep_after_zone_reporting(state=state, f=my_callback)
+# set the variables to be requested, otherwise they won't be available in the callback
 api.exchange.request_variable(state, "SITE OUTDOOR AIR DRYBULB TEMPERATURE", "ENVIRONMENT")
 api.exchange.request_variable(state, "SURFACE OUTSIDE FACE TEMPERATURE", surface_name)
 # Run the EnergyPlus simulation
