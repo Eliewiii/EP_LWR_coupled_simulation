@@ -4,6 +4,8 @@ Simulation with one building. The surface temperature of one surface is monitore
 
 import os
 
+from random import random
+
 import matplotlib.pyplot as plt
 from src.pyenergyplus.api import EnergyPlusAPI
 
@@ -48,20 +50,23 @@ def modify_and_record_schedule_value(state_argument):
     current_time = api.exchange.current_sim_time(state)
     time_steps.append(current_time)
 
-    new_value = 22.0
+    new_value = 22.0+ random()
 
-    handle = api.exchange.get_variable_handle(state_argument, "Schedule Value", schedule_name)
+
 
     api.exchange.set_actuator_value(state_argument, schedule_actuator_handle, new_value)
+    handle = api.exchange.get_variable_handle(state_argument, "Schedule Value", schedule_name)
     current_value = api.exchange.get_variable_value(state_argument, handle)
     schedule_values.append(current_value)
-    # print(f"Timestep {current_time}: Set value = {new_value}, Recorded value = {current_value}")
+    print(f"Timestep {current_time}: Set value = {new_value}, Recorded value = {current_value}")
 
 # Request the variable to access schedule values during the simulation
 api.exchange.request_variable(state, "Schedule Value", schedule_name)
 
 api.runtime.callback_after_new_environment_warmup_complete(state, initialize_actuator)
-api.runtime.callback_after_predictor_after_hvac_managers(state, modify_and_record_schedule_value)
+# api.runtime.callback_after_predictor_after_hvac_managers(state, modify_and_record_schedule_value)
+api.runtime.callback_after_predictor_before_hvac_managers(state, modify_and_record_schedule_value)
+
 # Run the EnergyPlus simulation
 api.runtime.run_energyplus(state,
                            ['-r',  # Run annual simulation
