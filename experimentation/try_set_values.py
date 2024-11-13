@@ -22,11 +22,11 @@ energyplus_dir = r"C:\EnergyPlusV23-2-0"
 
 # Path to your EnergyPlus directory and IDF file
 idf_file = os.path.join(path_one_drive_dir,
-                        r"BUA\LWR\pyenergyplus\sample_cube_buildings\IDFs\cube_1_with_schedule\openstudio\run\in.idf")
+                        r"BUA\LWR\pyenergyplus\sample_cube_buildings\IDFs\cube_1_with_surrounding_surface\openstudio\run\in.idf")
 epw_file = os.path.join(path_user,
                         r"AppData\Local\Building_urban_analysis\Libraries\EPW\IS_5280_A_Tel_Aviv.epw")  # Replace with your weather file path
 output_dir = os.path.join(path_one_drive_dir,
-                          r"BUA\LWR\pyenergyplus\sample_cube_buildings\IDFs\cube_1_with_schedule\pyenergyplus")  # Replace with your output directory
+                          r"BUA\LWR\pyenergyplus\sample_cube_buildings\IDFs\cube_1_with_surrounding_surface\pyenergyplus")  # Replace with your output directory
 
 api = EnergyPlusAPI(running_as_python_plugin=True, path_to_ep_folder=energyplus_dir)
 

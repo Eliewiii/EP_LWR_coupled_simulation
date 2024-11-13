@@ -60,29 +60,20 @@ def _write_surface_lwr_idf_additional_string(surface_name: str, sky_view_factor:
     additional_string += '\n'
 
 
-def _write_actuator(schedule_name: str) -> str:
-    """
-
-    :return:
-    """
-
-
 def _write_surface_temperature_schedule(schedule_name: str, init_temperature: float) -> str:
     """
 
     :return:
     """
     schedule_str = f"\n" \
-                   f"Schedule:Compact ," \
-                   f"{schedule_name}, !- Name" \
-                   f"{init_temperature} , !- Schedule Type Limits Name" \
-                   f"Through: 12/31 , !- Field 1" \
-                   f"For: AllDays , !- Field 2" \
-                   f"Until: 24:00 , 15.0; !- Field 3"
+                   f"Schedule:Constant,\n" \
+                   f"  {schedule_name}, !- Name\n" \
+                   f"  Temperature , !- Schedule Type Limits Name\n" \
+                   f"  {init_temperature};  !- Hourly Value\n"
     return schedule_str
 
 
-def _write_surface_property_surrounding_surfaces(surface_name: str, surface_property_surrounding_surface_name: str,
+def _write_surface_property_surrounding_surfaces(surface_property_surrounding_surface_name: str,
                                                  sky_view_factor: float, ground_view_factor: float,
                                                  context_surface_name: str, cumulated_view_factor: float,
                                                  context_surface_temperature_schedule: str,
@@ -116,7 +107,7 @@ def _write_surface_property_local_environment(surface_name: str, surface_propert
     surface_property_str = f"\n" \
                            f"SurfaceProperty:LocalEnvironment," \
                            f"{surface_property_local_environment_name}, !- Name" \
-                           f"{surface_name}; !- Exterior Surface Name" \
+                           f"{surface_name}, !- Exterior Surface Name" \
                            f"ExtShadingSch:Zn001:Wall001 , !- Sunlit Fraction Schedule Name" \
                            f"{surface_property_surrounding_surface_name} , !- Surrounding Surfaces Object Name" \
                            f"OutdoorAirNode :0001 , !- Outdoor Air Node Name" \
