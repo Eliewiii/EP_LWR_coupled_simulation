@@ -8,13 +8,12 @@ import os
 from src.pyenergyplus.api import EnergyPlusAPI
 
 
-
 class EPSimulationInstance:
     """
 
     """
 
-    def __init__(self,path_idf:str, path_epw:str, path_output_dir:str, path_energyplus_dir:str):
+    def __init__(self, path_idf: str, path_epw: str, path_output_dir: str, path_energyplus_dir: str,simulation_index: int):
         """
 
         """
@@ -28,21 +27,26 @@ class EPSimulationInstance:
         self.schedule_actuator_handle = None
 
         # Geometry
-        self.outdoor_surface_list = []
+        self.outdoor_surface_name_list = []
         self.outdoor_surface_surrounding_surface_vf_dict = {}
         self.outdoor_surface_sky_vf_dict = {}
         self.outdoor_surface_ground_vf_dict = {}
         # todo: potentially need to add the emissivity or other related parameters
 
+        # Surrounding surface temperature schedule
+        self.schedule_name_dict = {}
+
         # Handlers
         self.surface_temp_handler_dict = {}
-        self.surface_surrounding_temperature_schedule_temperature_handler_dict = {}
+        self.surrounding_surface_temperature_schedule_temperature_handler_dict = {}
 
         # LWR data
         self.f_epsilon_matrix = None
         self.f_matrix = None
 
         # Synchronization attributes
+        self.simulation_index = simulation_index  # Index of the simulation, to synchronize the simulation and
+        # set the order of surface temperature reading to match the LWR computation matrix
 
     def generate_idf_with_additional_strings(self):
         """
@@ -64,11 +68,31 @@ class EPSimulationInstance:
         :return:
         """
 
+    def request_variables_before_running_simulation(self):
+        """
+
+        :return:
+
+        A PRIORI DONE
+        """
+        for surface_name in self.outdoor_surface_name_list:
+            self.api.exchange.get_variable_handle(self.state, "SURFACE OUTSIDE FACE TEMPERATURE",
+                                                  surface_name)
+            self.api.exchange.get_variable_handle(self.state, "Schedule Value",
+                                                  self.schedule_name_dict[surface_name])
+
     def initialize_actuator_handler_callback_function(self):
         """
 
         :return:
         """
+        for surface_name in self.outdoor_surface_name_list:
+            schedule_actuator_handle = self.api.exchange.get_actuator_handle(self.state, "Schedule:Constant",
+                                                                        "Schedule Value", self.schedule_name_dict[surface_name])
+            if schedule_actuator_handle == -1:
+                raise ValueError(f"Failed to create actuator for schedule {self.schedule_name_dict[surface_name]}")
+            else:
+                self.surrounding_surface_temperature_schedule_temperature_handler_dict[surface_name] = schedule_actuator_handle
 
     def init_schedule_and_surface_temperature_handlers_call_back_function(self):
         """
@@ -92,12 +116,26 @@ class EPSimulationInstance:
 
         # update the surrounding surface temperature schedules with the proper "mean radiant temperature" values
 
-
     def run_ep_simulation(self):
         """
 
         :return:
         """
 
-
         # request the variables to access schedule and surface temperature values during the simulation
+
+        # Set the callback functions to run at the various moment of the simulation
+        self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
+                                                                        self.initialize_actuator_handler_callback_function)
+        self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
+                                                                        self.init_schedule_and_surface_temperature_handlers_call_back_function)
+        self.api.runtime.callback_after_predictor_before_hvac_managers(self.state,
+                                                                       self.coupled_simulation_callback_function)  # todo: might be change to the end of the timestep
+
+        # Run the EnergyPlus simulation
+        self.api.runtime.run_energyplus(self.state,
+                                        ['-r',  # Run annual simulation
+                                         '-w', self.path_epw,  # Weather file
+                                         '-d', self.output_dir,  # Output directory
+                                         self.idf_file]  # Input IDF file
+                                        )
