@@ -5,6 +5,8 @@ managing the handlers etc.
 
 import os
 
+from typing import List
+
 from src.pyenergyplus.api import EnergyPlusAPI
 
 
@@ -24,7 +26,8 @@ class EPSimulationInstance:
         self.path_idf = path_idf
         self.path_epw = path_epw
         self.path_output_dir = path_output_dir
-        self.schedule_actuator_handle = None
+        self.schedule_actuator_handle_list = []
+        self.surface_temperature_handle_list = []
 
         # Geometry
         self.outdoor_surface_name_list = []
@@ -100,21 +103,52 @@ class EPSimulationInstance:
         :return:
         """
 
-    def coupled_simulation_callback_function(self):
+    def get_surface_temperature_of_all_outdoor_surfaces(self)->List[float]:
+        """
+        Reads the surface temperature of all the outdoor surfaces and store them in a list.
+        :return: list,  List of surface temperatures
+        """
+        surface_temperatures_list = []
+        for surface_temperature_handle in self.surface_temperature_handle_list:
+            surface_temperatures_list.append(
+                self.api.exchange.get_variable_value(self.state, surface_temperature_handle))
+        return surface_temperatures_list
+
+    def write_surface_temperatures_in_file(self,current_time):
+        """
+
+        :return:
+        """
+        surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
+        # write down the surface temperatures in a file with tmp extension to avoid reading it before it is fully written
+        with open(os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.tmp"), 'a') as file:
+            file.write(f"{current_time} {surface_temperatures_list}\n")
+        # Rename the file to remove the .tmp extension
+        os.rename(os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.tmp"),
+                    os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
+
+
+    def coupled_simulation_callback_function(self,state):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
         :return:
         """
 
         # Get current simulation time (in hours)
-
+        current_time = self.api.exchange.current_sim_time(state)
+        # Get the surface temperatures of all the surfaces
+        surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
         # write down the surface temperatures in a file
+
 
         # wait for the other building to write down its surface temperatures
 
         # read the other building surface temperatures
 
         # update the surrounding surface temperature schedules with the proper "mean radiant temperature" values
+
+        # Delete the file with the surface temperatures
+        # os.remove(os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
 
     def run_ep_simulation(self):
         """
