@@ -52,6 +52,8 @@ class EpSimulationInstance:
         self.simulation_index = simulation_index  # Index of the simulation, to synchronize the simulation and
         # set the order of surface temperature reading to match the LWR computation matrix
         self.shared_temperature_array = None
+        self.shared_memory_lock = None
+        self.synch_point_barrier = None
 
     def generate_idf_with_additional_strings(self):
         """
@@ -131,7 +133,7 @@ class EpSimulationInstance:
         os.rename(os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
                   os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.txt"))
 
-    def coupled_simulation_callback_function(self, state):
+    def coupled_simulation_callback_function(self, state,shared_array, shared_memory_lock, synch_point_barrier):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
         :return:
@@ -142,16 +144,15 @@ class EpSimulationInstance:
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
         # write down the surface temperatures the shared memory
-        with lock:
+        with shared_memory_lock :
             # todo: need to indicated properly the start and end index of the shared memory
             # Here we are writing the list as a slice of the shared memory
-            shared_array[index:index + len(float_list)] = float_list
+            shared_array[index:index + len(float_list)] = np.array(surface_temperatures_list)**4  # directly give the temperatures power 4
             print(f"Process {index} wrote data at index {index}")
 
         # wait for the other building to write down its surface temperatures
-
-        # read the other building surface temperatures
-
+        synch_point_barrier.wait()
+        # can directly use the numpy array to compute the LWR
         # update the surrounding surface temperature schedules with the proper "mean radiant temperature" values
 
         # Delete the file with the surface temperatures
@@ -165,12 +166,15 @@ class EpSimulationInstance:
         """
         # Point to the shared memory
         shm = shared_memory.SharedMemory(name=shared_memory_name)
-        shared_array = np.ndarray(array_shape, dtype=np.float64, buffer=shm.buf)
-        self.shared_temperature_array = shared_array
+        shared_array = np.ndarray(shared_memory_array_shape, dtype=np.float64, buffer=shm.buf)
+
 
 
         # request the variables to access schedule and surface temperature values during the simulation
 
+        # Make wrapper for the main callback function
+        def simulation_callback_function(state):
+            return self.coupled_simulation_callback_function(state, shared_array, shared_memory_lock, synch_point_barrier)
         # Set the callback functions to run at the various moment of the simulation
         self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
                                                                         self.initialize_actuator_handler_callback_function)

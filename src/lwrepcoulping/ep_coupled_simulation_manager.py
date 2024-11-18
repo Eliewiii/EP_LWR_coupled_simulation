@@ -61,14 +61,13 @@ class EpLwrSimulationManager:
                 with ProcessPoolExecutor() as executor:
                     futures = [
                         executor.submit(
-                            process_task,
+                            ep_simulation_instance.run_ep_simulation,
                             shm.name,
                             array_shape,
                             lock,
                             barrier,
-                            i
                         )
-                        for i in range(num_processes)
+                        for ep_simulation_instance in self._ep_simulation_instance_list
                     ]
                     # Wait for all processes to complete
                     for future in futures:
