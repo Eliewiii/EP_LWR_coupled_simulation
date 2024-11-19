@@ -68,13 +68,6 @@ class EpSimulationInstance:
         :return:
         """
 
-    @staticmethod
-    def read_other_building_surface_temperature():
-        """
-
-        :return:
-        """
-
     def request_variables_before_running_simulation(self):
         """
 
@@ -83,10 +76,12 @@ class EpSimulationInstance:
         A PRIORI DONE
         """
         for surface_name in self.outdoor_surface_name_list:
-            self.api.exchange.get_variable_handle(self.state, "SURFACE OUTSIDE FACE TEMPERATURE",
+            self.api.exchange.request_variable(self.state, "SURFACE OUTSIDE FACE TEMPERATURE",
                                                   surface_name)
-            self.api.exchange.get_variable_handle(self.state, "Schedule Value",
+            self.api.exchange.request_variable(self.state, "Schedule Value",
                                                   self.schedule_name_dict[surface_name])
+
+
 
     def initialize_actuator_handler_callback_function(self):
         """
@@ -109,7 +104,7 @@ class EpSimulationInstance:
         :return:
         """
 
-    def get_surface_temperature_of_all_outdoor_surfaces(self) -> List[float]:
+    def get_surface_temperature_of_all_outdoor_surfaces_in_kelvin(self) -> List[float]:
         """
         Reads the surface temperature of all the outdoor surfaces and store them in a list.
         :return: list,  List of surface temperatures
@@ -117,7 +112,8 @@ class EpSimulationInstance:
         surface_temperatures_list = []
         for surface_temperature_handle in self.surface_temperature_handle_list:
             surface_temperatures_list.append(
-                self.api.exchange.get_variable_value(self.state, surface_temperature_handle))
+                self.api.exchange.get_variable_value(self.state,
+                                                     surface_temperature_handle) + 273.15)  # convert to Kelvin
         return surface_temperatures_list
 
     def write_surface_temperatures_in_file(self, current_time):
@@ -133,21 +129,23 @@ class EpSimulationInstance:
         os.rename(os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
                   os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.txt"))
 
-    def coupled_simulation_callback_function(self, state,shared_array, shared_memory_lock, synch_point_barrier):
+    def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock, synch_point_barrier):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
         :return:
         """
+        # Todo implement teh rest of the function with the LWR logic
 
         # Get current simulation time (in hours)
         current_time = self.api.exchange.current_sim_time(state)
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
         # write down the surface temperatures the shared memory
-        with shared_memory_lock :
+        with shared_memory_lock:
             # todo: need to indicated properly the start and end index of the shared memory
             # Here we are writing the list as a slice of the shared memory
-            shared_array[index:index + len(float_list)] = np.array(surface_temperatures_list)**4  # directly give the temperatures power 4
+            shared_array[index:index + len(float_list)] = np.array(
+                surface_temperatures_list) ** 4  # directly give the temperatures power 4
             print(f"Process {index} wrote data at index {index}")
 
         # wait for the other building to write down its surface temperatures
@@ -158,8 +156,45 @@ class EpSimulationInstance:
         # Delete the file with the surface temperatures
         # os.remove(os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
 
-    def run_ep_simulation(self,shared_memory_name,shared_memory_array_shape, shared_memory_lock,
-                                          synch_point_barrier):
+    def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock, synch_point_barrier):
+        """
+        Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
+        This function is a test version that will not perform the LWR computation but will write the surface temperatures and update the schedules
+        to test the synchronization of the shared memory and the barrier.
+        :return:
+        """
+        #
+        # # Get current simulation time (in hours)
+        # current_time = self.api.exchange.current_sim_time(state)
+        # Get the surface temperatures of all the surfaces
+        surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
+        # write down the surface temperatures the shared memory
+        with shared_memory_lock:
+            # todo: need to indicated properly the start and end index of the shared memory
+            # Here we are writing the list as a slice of the shared memory
+            shared_array[index:index + len(float_list)] = np.array(
+                surface_temperatures_list) ** 4  # directly give the temperatures power 4
+            print(f"Process {index} wrote data at index {index}")
+
+        # wait for the other building to write down its surface temperatures
+        synch_point_barrier.wait()
+        # Compute a somewhat mean surface temperature, to test the synchronization, only one surface per building will be used
+        mean_surface_temperature = np.mean(shared_array ** (1 / 4)) - 273.15  # convert back to Celsius
+        # Set the surrounding surface temperature to the average of the surface temperatures
+        for surface_name in self.outdoor_surface_name_list:
+            self.api.exchange.set_actuator_value(state,
+                                                 self.surrounding_surface_temperature_schedule_temperature_handler_dict[
+                                                     surface_name], mean_surface_temperature)
+            # get the current value of the schedule
+            handle = self.api.exchange.get_variable_handle(state, "Schedule Value",
+                                                           self.schedule_name_dict[surface_name])
+            current_value = self.api.exchange.get_variable_value(state, handle)
+            assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
+
+        # Delete the file with the surface temperatures
+
+    def run_ep_simulation(self, shared_memory_name, shared_memory_array_shape, shared_memory_lock,
+                          synch_point_barrier):
         """
 
         :return:
@@ -168,20 +203,23 @@ class EpSimulationInstance:
         shm = shared_memory.SharedMemory(name=shared_memory_name)
         shared_array = np.ndarray(shared_memory_array_shape, dtype=np.float64, buffer=shm.buf)
 
-
-
         # request the variables to access schedule and surface temperature values during the simulation
-
+        self.request_variables_before_running_simulation()
+        self.request_additional_variables_before_running_simulation_for_testing()
         # Make wrapper for the main callback function
         def simulation_callback_function(state):
-            return self.coupled_simulation_callback_function(state, shared_array, shared_memory_lock, synch_point_barrier)
+            # return self.coupled_simulation_callback_function(state, shared_array, shared_memory_lock,
+            #                                                  synch_point_barrier)
+            return self.coupled_simulation_callback_function_test(state, shared_array, shared_memory_lock,
+                                                                  synch_point_barrier)
+
         # Set the callback functions to run at the various moment of the simulation
         self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
                                                                         self.initialize_actuator_handler_callback_function)
         self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
                                                                         self.init_schedule_and_surface_temperature_handlers_call_back_function)
         self.api.runtime.callback_after_predictor_before_hvac_managers(self.state,
-                                                                       self.coupled_simulation_callback_function)  # todo: might be change to the end of the timestep
+                                                                       simulation_callback_function)  # todo: might be change to the end of the timestep
 
         # Run the EnergyPlus simulation
         self.api.runtime.run_energyplus(self.state,
@@ -192,7 +230,8 @@ class EpSimulationInstance:
                                         )
 
 
-def run_simulation_wrapper(simulation_instance: EpSimulationInstance, shared_memory_name: str,shared_memory_array_shape, shared_memory_lock,
+def run_simulation_wrapper(simulation_instance: EpSimulationInstance, shared_memory_name: str,
+                           shared_memory_array_shape, shared_memory_lock,
                            synch_point_barrier):
     """
 
@@ -202,6 +241,8 @@ def run_simulation_wrapper(simulation_instance: EpSimulationInstance, shared_mem
     :param synch_point_barrier:
     :return:
     """
-    simulation_instance.run_ep_simulation(shared_memory_name=shared_memory_name,shared_memory_array_shape=shared_memory_array_shape, shared_memory_lock=shared_memory_lock,
+    simulation_instance.run_ep_simulation(shared_memory_name=shared_memory_name,
+                                          shared_memory_array_shape=shared_memory_array_shape,
+                                          shared_memory_lock=shared_memory_lock,
                                           synch_point_barrier=synch_point_barrier)
     return None
