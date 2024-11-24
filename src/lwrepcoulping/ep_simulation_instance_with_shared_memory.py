@@ -19,7 +19,8 @@ class EpSimulationInstance:
 
     """
 
-    def __init__(self, building_id:str,path_idf: str, path_epw: str, path_output_dir: str, path_energyplus_dir: str,
+    def __init__(self, building_id: str, path_idf: str, path_epw: str, path_output_dir: str,
+                 path_energyplus_dir: str,
                  simulation_index: int):
         """
 
@@ -32,9 +33,6 @@ class EpSimulationInstance:
         self.path_simulated_idf = None
         self.path_epw = path_epw
         self.path_output_dir = path_output_dir
-        #
-        self.schedule_actuator_handle_list = []
-        self.surface_temperature_handle_list = []
 
         # Geometry
         self.outdoor_surface_name_list = []
@@ -43,11 +41,9 @@ class EpSimulationInstance:
         self.outdoor_surface_ground_vf_dict = {}
         # todo: potentially need to add the emissivity or other related parameters
 
-        # Surrounding surface temperature schedule
-        self.schedule_name_dict = {}
-
         # Handlers
-        self.schedule_actuator_handle_list = []
+        self.schedule_name_dict = {}
+        self.schedule_actuator_handle_dict = {}
         self.surface_temp_handler_dict = {}
         self.surrounding_surface_temperature_schedule_temperature_handler_list = {}
 
@@ -60,14 +56,18 @@ class EpSimulationInstance:
         self.surface_index_min = None
         self.surface_index_max = None
 
-    def set_outdoor_surfaces_and_view_factors(self, outdoor_surface_name_list: List[str], vf_matrices: List[np.ndarray],manager_num_outdoor_surfaces: int):
+    def set_outdoor_surfaces_and_view_factors(self, outdoor_surface_name_list: List[str],
+                                              vf_matrices: List[np.ndarray],
+                                              manager_num_outdoor_surfaces: int):
         """
         Set the outdoor surfaces and the view factors for the simulation.
         :param outdoor_surface_name_list: list, List of the names of the outdoor surfaces
         :param vf_matrices: list, List of the view factor matrices
         :return:
         """
+        # Set surfaces
         self.outdoor_surface_name_list = outdoor_surface_name_list
+        # Set Matrices
         # self.f_epsilon_matrix = vf_matrices[0]
         # self.f_matrix = vf_matrices[1]
 
@@ -105,6 +105,13 @@ class EpSimulationInstance:
         for surface_name in self.outdoor_surface_name_list:
             self.api.exchange.request_variable(self.state, "SURFACE OUTSIDE FACE TEMPERATURE",
                                                surface_name)
+
+    def request_additional_variables_before_running_simulation_for_testing(self):
+        """
+
+        :return:
+        """
+        for surface_name in self.outdoor_surface_name_list:
             self.api.exchange.request_variable(self.state, "Schedule Value",
                                                self.schedule_name_dict[surface_name])
 
@@ -122,10 +129,9 @@ class EpSimulationInstance:
                 raise ValueError(
                     f"Failed to create actuator for schedule {self.schedule_name_dict[surface_name]}")
             else:
-                self.surrounding_surface_temperature_schedule_temperature_handler_dict[
-                    surface_name] = schedule_actuator_handle
+                self.schedule_actuator_handle_dict[surface_name] = schedule_actuator_handle
 
-    def init_schedule_and_surface_temperature_handlers_call_back_function(self):
+    def init_surface_temperature_handlers_call_back_function(self):
         """
 
         :return:
@@ -134,6 +140,13 @@ class EpSimulationInstance:
             self.surface_temp_handler_dict[surface_name] = self.api.exchange.get_variable_handle(self.state,
                                                                                                  "SURFACE OUTSIDE FACE TEMPERATURE",
                                                                                                  surface_name)
+
+    def init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self):
+        """
+
+        :return:
+        """
+        for surface_name in self.outdoor_surface_name_list:
             self.surrounding_surface_temperature_schedule_temperature_handler_dict[
                 surface_name] = self.api.exchange.get_variable_handle(self.state, "Schedule Value",
                                                                       self.schedule_name_dict[surface_name])
@@ -201,16 +214,15 @@ class EpSimulationInstance:
         :return:
         """
         #
-        # Get current simulation time (in hours)
-        self.test_current_time_list.append(self.api.exchange.current_sim_time(state))
+
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
-        self.test_temperature_list.append(surface_temperatures_list)
+
         # write down the surface temperatures the shared memory
         with shared_memory_lock:
             # todo: need to indicated properly the start and end index of the shared memory
             # Here we are writing the list as a slice of the shared memory
-            shared_array[self.simulation_index] = np.array(
+            shared_array[self.surface_index_min:self.surface_index_max] = np.array(
                 surface_temperatures_list) ** 4  # directly give the temperatures power 4
 
         # wait for the other building to write down its surface temperatures
@@ -223,15 +235,18 @@ class EpSimulationInstance:
                                                  self.surrounding_surface_temperature_schedule_temperature_handler_dict[
                                                      surface_name], mean_surface_temperature)
             # get the current value of the schedule
-            handle = self.api.exchange.get_variable_handle(state, "Schedule Value",
-                                                           self.schedule_name_dict[surface_name])
-            current_value = self.api.exchange.get_variable_value(state, handle)
+            current_value = self.api.exchange.get_variable_value(state,
+                                                                 self.surrounding_surface_temperature_schedule_temperature_handler_list[
+                                                                     surface_name])
             assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
-            self.test_surrounding_surface_temperature_list.append(mean_surface_temperature)
+        # -- For testing --#
+        # Get current simulation time (in hours)
+        self.test_current_time_list.append(self.api.exchange.current_sim_time(state))
+        self.test_temperature_list.append(surface_temperatures_list)
+        self.test_surrounding_surface_temperature_list.append(mean_surface_temperature)
+        #-----------------#
 
-        # Delete the file with the surface temperatures
-
-    def run_ep_simulation(self, shared_memory_name, shared_memory_array_shape, shared_memory_lock,
+    def run_ep_simulation(self, shared_memory_name, shared_memory_array_size, shared_memory_lock,
                           synch_point_barrier):
         """
 
@@ -239,7 +254,7 @@ class EpSimulationInstance:
         """
         # Point to the shared memory
         shm = shared_memory.SharedMemory(name=shared_memory_name)
-        shared_array = np.ndarray(shared_memory_array_shape, dtype=np.float64, buffer=shm.buf)
+        shared_array = np.ndarray(shared_memory_array_size, dtype=np.float64, buffer=shm.buf)
 
         # request the variables to access schedule and surface temperature values during the simulation
         self.request_variables_before_running_simulation()
@@ -256,7 +271,11 @@ class EpSimulationInstance:
         self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
                                                                         self.initialize_actuator_handler_callback_function)
         self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
-                                                                        self.init_schedule_and_surface_temperature_handlers_call_back_function)
+                                                                        self.init_surface_temperature_handlers_call_back_function)
+        #-- For testing --#
+        self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
+                                                                        self.init_surrounding_surface_schedule_handlers_call_back_function_for_testing)
+        #-----------------#
         self.api.runtime.callback_after_predictor_before_hvac_managers(self.state,
                                                                        simulation_callback_function)  # todo: might be change to the end of the timestep
 

@@ -15,18 +15,15 @@ class EpLwrSimulationManager:
         self._building_id_list = []
         self._ep_simulation_instance_dict = []
 
-
-
         # Input variables
         self._path_output_dir = None
         self._path_epw = None
 
         #
 
-
-    #-----------------------------------------------------#
-    #--------------------- Properties --------------------#
-    #-----------------------------------------------------#
+    # -----------------------------------------------------#
+    # --------------------- Properties --------------------#
+    # -----------------------------------------------------#
 
     @property
     def num_building(self):
@@ -34,9 +31,10 @@ class EpLwrSimulationManager:
 
     @property
     def num_outdoor_surfaces(self):
-        return sum([len(ep_simulation_instance.outdoor_surface_name_list) for ep_simulation_instance in self._ep_simulation_instance_dict])
+        return sum([len(ep_simulation_instance.outdoor_surface_name_list) for ep_simulation_instance in
+                    self._ep_simulation_instance_dict])
 
-    def add_building(self, building_id, path_idf,path_energyplus_dir,oudoor_surface_name_list, vf_matrices):
+    def add_building(self, building_id, path_idf, path_energyplus_dir, oudoor_surface_name_list, vf_matrices):
         """
         Add a building to the simulation manager.
 
@@ -51,7 +49,8 @@ class EpLwrSimulationManager:
             path_energyplus_dir=path_energyplus_dir,
             simulation_index=self.num_building
         )
-        ep_simulation_instance.set_outdoor_surfaces_and_view_factors(oudoor_surface_name_list, vf_matrices, manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
+        ep_simulation_instance.set_outdoor_surfaces_and_view_factors(oudoor_surface_name_list, vf_matrices,
+                                                                     manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
         self._building_id_list.append(building_id)
         self._ep_simulation_instance_dict.append(ep_simulation_instance)
 
@@ -60,13 +59,14 @@ class EpLwrSimulationManager:
 
         """
         # todo : implement this method
+
     def adjust_buildings_idf(self):
         """
 
         :return:
         """
         for ep_simulation_instance in self._ep_simulation_instance_dict.values():
-            ep_simulation_instance.()
+            ep_simulation_instance.adjust_idf()
 
     def run_lwr_coupled_simulation(self):
         """
@@ -74,9 +74,9 @@ class EpLwrSimulationManager:
         :return:
         """
 
-        #todo : identify the size of array_shape according to the number of outdoor surfaces of the buildings
+        # todo : identify the size of array_shape according to the number of outdoor surfaces of the buildings
         # need to be in the proper format
-        array_shape= None
+        shared_memory_array_size = self.num_outdoor_surfaces * np.float64().itemsize
 
         # Run the simulation under a Manager context to share memory, locks, and barriers
         with Manager() as manager:
@@ -86,19 +86,19 @@ class EpLwrSimulationManager:
             # Initialize a barrier to synchronize processes, when called with .wait() all processes will wait until all
             # processes have reached the barrier
             synch_point_barrier = manager.Barrier(self.num_building)
-
             # Create shared memory for float64 data (enough for all processes' lists)
-            shm = shared_memory.SharedMemory(create=True, size=array_shape[0] * np.float64().itemsize)
+            shm = shared_memory.SharedMemory(create=True, size=shared_memory_array_size* np.float64().itemsize)
 
             # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
             try:
                 # Start tasks
-                with ProcessPoolExecutor() as executor:
+                results_list = []
+                with ProcessPoolExecutor(max_workers=self.num_building) as executor:
                     futures = [
                         executor.submit(
                             ep_simulation_instance.run_ep_simulation,
                             shm.name,
-                            array_shape,
+                            shared_memory_array_size,
                             shared_memory_lock,
                             synch_point_barrier,
                         )
@@ -106,8 +106,10 @@ class EpLwrSimulationManager:
                     ]
                     # Wait for all processes to complete
                     for future in futures:
-                        future.result()
-
+                        try:
+                            results_list.extend(future.result())
+                        except Exception as e:
+                            print(f"Task generated an exception: {e}")
             finally:
                 # Cleanup
                 shm.close()
