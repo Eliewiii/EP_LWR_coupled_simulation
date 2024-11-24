@@ -10,11 +10,11 @@ from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
 
 
 class EpLwrSimulationManager:
-    def __init__(self, simulation, coupling):
+    def __init__(self):
         # Simulation
         self._building_id_list = []
-        self._ep_simulation_instance_list = []
-        self._path_idf_list = []  # Ordered according to building_id_list
+        self._ep_simulation_instance_dict = []
+
 
 
         # Input variables
@@ -32,6 +32,41 @@ class EpLwrSimulationManager:
     def num_building(self):
         return len(self._building_id_list)
 
+    @property
+    def num_outdoor_surfaces(self):
+        return sum([len(ep_simulation_instance.outdoor_surface_name_list) for ep_simulation_instance in self._ep_simulation_instance_dict])
+
+    def add_building(self, building_id, path_idf,path_energyplus_dir,oudoor_surface_name_list, vf_matrices):
+        """
+        Add a building to the simulation manager.
+
+        :param building_id: The building ID.
+        :param path_idf: The path to the IDF file for the building.
+        """
+        # Create an EnergyPlus simulation instance for the building
+        ep_simulation_instance = EpSimulationInstance(
+            path_idf=path_idf,
+            path_epw=self._path_epw,
+            path_output_dir=os.path.join(self._path_output_dir, f"building_{building_id}"),
+            path_energyplus_dir=path_energyplus_dir,
+            simulation_index=self.num_building
+        )
+        ep_simulation_instance.set_outdoor_surfaces_and_view_factors(oudoor_surface_name_list, vf_matrices, manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
+        self._building_id_list.append(building_id)
+        self._ep_simulation_instance_dict.append(ep_simulation_instance)
+
+    def set_outdoor_surfaces_and_view_factors(self):
+        """
+
+        """
+        # todo : implement this method
+    def adjust_buildings_idf(self):
+        """
+
+        :return:
+        """
+        for ep_simulation_instance in self._ep_simulation_instance_dict.values():
+            ep_simulation_instance.()
 
     def run_lwr_coupled_simulation(self):
         """
@@ -64,8 +99,8 @@ class EpLwrSimulationManager:
                             ep_simulation_instance.run_ep_simulation,
                             shm.name,
                             array_shape,
-                            lock,
-                            barrier,
+                            shared_memory_lock,
+                            synch_point_barrier,
                         )
                         for ep_simulation_instance in self._ep_simulation_instance_list
                     ]

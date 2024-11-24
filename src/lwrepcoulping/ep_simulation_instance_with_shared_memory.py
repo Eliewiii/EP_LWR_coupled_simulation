@@ -4,6 +4,7 @@ managing the handlers etc.
 """
 
 import os
+import shutil
 import numpy as np
 
 from multiprocessing import shared_memory
@@ -18,7 +19,7 @@ class EpSimulationInstance:
 
     """
 
-    def __init__(self, path_idf: str, path_epw: str, path_output_dir: str, path_energyplus_dir: str,
+    def __init__(self, building_id:str,path_idf: str, path_epw: str, path_output_dir: str, path_energyplus_dir: str,
                  simulation_index: int):
         """
 
@@ -27,9 +28,11 @@ class EpSimulationInstance:
         self.api = EnergyPlusAPI(running_as_python_plugin=True, path_to_ep_folder=path_energyplus_dir)
         self.state = self.api.state_manager.new_state()
         #
-        self.path_idf = path_idf
+        self.path_original_idf = path_idf
+        self.path_simulated_idf = None
         self.path_epw = path_epw
         self.path_output_dir = path_output_dir
+        #
         self.schedule_actuator_handle_list = []
         self.surface_temperature_handle_list = []
 
@@ -44,8 +47,9 @@ class EpSimulationInstance:
         self.schedule_name_dict = {}
 
         # Handlers
+        self.schedule_actuator_handle_list = []
         self.surface_temp_handler_dict = {}
-        self.surrounding_surface_temperature_schedule_temperature_handler_dict = {}
+        self.surrounding_surface_temperature_schedule_temperature_handler_list = {}
 
         # LWR data
         self.f_epsilon_matrix = None
@@ -53,17 +57,37 @@ class EpSimulationInstance:
 
         # Synchronization attributes
         self.simulation_index = simulation_index  # Index of the simulation, to synchronize the simulation and
-        # set the order of surface temperature reading to match the LWR computation matrix
-        self.shared_temperature_array = None
-        self.shared_memory_lock = None
-        self.synch_point_barrier = None
+        self.surface_index_min = None
+        self.surface_index_max = None
 
-    def generate_idf_with_additional_strings(self):
+    def set_outdoor_surfaces_and_view_factors(self, outdoor_surface_name_list: List[str], vf_matrices: List[np.ndarray],manager_num_outdoor_surfaces: int):
         """
-
-        :param additional_strings:
+        Set the outdoor surfaces and the view factors for the simulation.
+        :param outdoor_surface_name_list: list, List of the names of the outdoor surfaces
+        :param vf_matrices: list, List of the view factor matrices
         :return:
         """
+        self.outdoor_surface_name_list = outdoor_surface_name_list
+        # self.f_epsilon_matrix = vf_matrices[0]
+        # self.f_matrix = vf_matrices[1]
+
+        #
+        self.surface_index_min = manager_num_outdoor_surfaces
+        self.surface_index_max = manager_num_outdoor_surfaces + len(outdoor_surface_name_list) - 1
+
+    def adjust_idf(self):
+        """
+
+        :return:
+        """
+        # Generate the additional strings
+        additional_strings = self.generate_additional_strings()
+        # Make a copy of the original IDF file to the output directory
+        self.path_simulated_idf = os.path.join(self.path_output_dir, f"in.idf")
+        shutil.copy(self.path_original_idf, self.path_simulated_idf)
+        # Add the additional strings to the IDF file
+        with open(self.path_simulated_idf, 'a') as file:
+            file.write(additional_strings)
 
     def generate_additional_strings(self):
         """
@@ -140,33 +164,33 @@ class EpSimulationInstance:
         os.rename(os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
                   os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.txt"))
 
-    def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock,
-                                             synch_point_barrier):
-        """
-        Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
-        :return:
-        """
-        # Todo implement teh rest of the function with the LWR logic
-
-        # Get current simulation time (in hours)
-        current_time = self.api.exchange.current_sim_time(state)
-        # Get the surface temperatures of all the surfaces
-        surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
-        # write down the surface temperatures the shared memory
-        with shared_memory_lock:
-            # todo: need to indicated properly the start and end index of the shared memory
-            # Here we are writing the list as a slice of the shared memory
-            shared_array[index:index + len(float_list)] = np.array(
-                surface_temperatures_list) ** 4  # directly give the temperatures power 4
-            print(f"Process {index} wrote data at index {index}")
-
-        # wait for the other building to write down its surface temperatures
-        synch_point_barrier.wait()
-        # can directly use the numpy array to compute the LWR
-        # update the surrounding surface temperature schedules with the proper "mean radiant temperature" values
-
-        # Delete the file with the surface temperatures
-        # os.remove(os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
+    # def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock,
+    #                                          synch_point_barrier):
+    #     """
+    #     Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
+    #     :return:
+    #     """
+    #     # Todo implement teh rest of the function with the LWR logic
+    #
+    #     # Get current simulation time (in hours)
+    #     current_time = self.api.exchange.current_sim_time(state)
+    #     # Get the surface temperatures of all the surfaces
+    #     surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
+    #     # write down the surface temperatures the shared memory
+    #     with shared_memory_lock:
+    #         # todo: need to indicated properly the start and end index of the shared memory
+    #         # Here we are writing the list as a slice of the shared memory
+    #         shared_array[index:index + len(float_list)] = np.array(
+    #             surface_temperatures_list) ** 4  # directly give the temperatures power 4
+    #         print(f"Process {index} wrote data at index {index}")
+    #
+    #     # wait for the other building to write down its surface temperatures
+    #     synch_point_barrier.wait()
+    #     # can directly use the numpy array to compute the LWR
+    #     # update the surrounding surface temperature schedules with the proper "mean radiant temperature" values
+    #
+    #     # Delete the file with the surface temperatures
+    #     # os.remove(os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
 
     def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock,
                                                   synch_point_barrier):
@@ -186,9 +210,8 @@ class EpSimulationInstance:
         with shared_memory_lock:
             # todo: need to indicated properly the start and end index of the shared memory
             # Here we are writing the list as a slice of the shared memory
-            shared_array[index:index + len(float_list)] = np.array(
+            shared_array[self.simulation_index] = np.array(
                 surface_temperatures_list) ** 4  # directly give the temperatures power 4
-            print(f"Process {index} wrote data at index {index}")
 
         # wait for the other building to write down its surface temperatures
         synch_point_barrier.wait()
@@ -249,9 +272,7 @@ class EpSimulationInstance:
                                          self.idf_file]  # Input IDF file
                                         )
 
-        return [deepcopy(self.test_temperature_list),
-                deepcopy(self.test_surrounding_surface_temperature_list),
-                deepcopy(self.test_current_time_list)]
+        return self
 
 
 def run_simulation_wrapper(simulation_instance: EpSimulationInstance, shared_memory_name: str,
