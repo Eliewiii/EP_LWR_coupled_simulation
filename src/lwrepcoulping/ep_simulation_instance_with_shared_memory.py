@@ -4,8 +4,11 @@ managing the handlers etc.
 """
 
 import os
+import numpy as np
+
 from multiprocessing import shared_memory
 from typing import List
+from copy import deepcopy
 
 from src.pyenergyplus.api import EnergyPlusAPI
 
@@ -77,11 +80,9 @@ class EpSimulationInstance:
         """
         for surface_name in self.outdoor_surface_name_list:
             self.api.exchange.request_variable(self.state, "SURFACE OUTSIDE FACE TEMPERATURE",
-                                                  surface_name)
+                                               surface_name)
             self.api.exchange.request_variable(self.state, "Schedule Value",
-                                                  self.schedule_name_dict[surface_name])
-
-
+                                               self.schedule_name_dict[surface_name])
 
     def initialize_actuator_handler_callback_function(self):
         """
@@ -91,9 +92,11 @@ class EpSimulationInstance:
         for surface_name in self.outdoor_surface_name_list:
             schedule_actuator_handle = self.api.exchange.get_actuator_handle(self.state, "Schedule:Constant",
                                                                              "Schedule Value",
-                                                                             self.schedule_name_dict[surface_name])
+                                                                             self.schedule_name_dict[
+                                                                                 surface_name])
             if schedule_actuator_handle == -1:
-                raise ValueError(f"Failed to create actuator for schedule {self.schedule_name_dict[surface_name]}")
+                raise ValueError(
+                    f"Failed to create actuator for schedule {self.schedule_name_dict[surface_name]}")
             else:
                 self.surrounding_surface_temperature_schedule_temperature_handler_dict[
                     surface_name] = schedule_actuator_handle
@@ -103,6 +106,13 @@ class EpSimulationInstance:
 
         :return:
         """
+        for surface_name in self.outdoor_surface_name_list:
+            self.surface_temp_handler_dict[surface_name] = self.api.exchange.get_variable_handle(self.state,
+                                                                                                 "SURFACE OUTSIDE FACE TEMPERATURE",
+                                                                                                 surface_name)
+            self.surrounding_surface_temperature_schedule_temperature_handler_dict[
+                surface_name] = self.api.exchange.get_variable_handle(self.state, "Schedule Value",
+                                                                      self.schedule_name_dict[surface_name])
 
     def get_surface_temperature_of_all_outdoor_surfaces_in_kelvin(self) -> List[float]:
         """
@@ -123,13 +133,15 @@ class EpSimulationInstance:
         """
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
         # write down the surface temperatures in a file with tmp extension to avoid reading it before it is fully written
-        with open(os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.tmp"), 'a') as file:
+        with open(os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
+                  'a') as file:
             file.write(f"{current_time} {surface_temperatures_list}\n")
         # Rename the file to remove the .tmp extension
         os.rename(os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
                   os.path.join(self.path_output_dir, f"{current_time}_{self.simulation_index}.txt"))
 
-    def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock, synch_point_barrier):
+    def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock,
+                                             synch_point_barrier):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
         :return:
@@ -156,7 +168,8 @@ class EpSimulationInstance:
         # Delete the file with the surface temperatures
         # os.remove(os.path.join(self.path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
 
-    def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock, synch_point_barrier):
+    def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock,
+                                                  synch_point_barrier):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
         This function is a test version that will not perform the LWR computation but will write the surface temperatures and update the schedules
@@ -164,10 +177,11 @@ class EpSimulationInstance:
         :return:
         """
         #
-        # # Get current simulation time (in hours)
-        # current_time = self.api.exchange.current_sim_time(state)
+        # Get current simulation time (in hours)
+        self.test_current_time_list.append(self.api.exchange.current_sim_time(state))
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
+        self.test_temperature_list.append(surface_temperatures_list)
         # write down the surface temperatures the shared memory
         with shared_memory_lock:
             # todo: need to indicated properly the start and end index of the shared memory
@@ -190,6 +204,7 @@ class EpSimulationInstance:
                                                            self.schedule_name_dict[surface_name])
             current_value = self.api.exchange.get_variable_value(state, handle)
             assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
+            self.test_surrounding_surface_temperature_list.append(mean_surface_temperature)
 
         # Delete the file with the surface temperatures
 
@@ -206,6 +221,7 @@ class EpSimulationInstance:
         # request the variables to access schedule and surface temperature values during the simulation
         self.request_variables_before_running_simulation()
         self.request_additional_variables_before_running_simulation_for_testing()
+
         # Make wrapper for the main callback function
         def simulation_callback_function(state):
             # return self.coupled_simulation_callback_function(state, shared_array, shared_memory_lock,
@@ -221,6 +237,10 @@ class EpSimulationInstance:
         self.api.runtime.callback_after_predictor_before_hvac_managers(self.state,
                                                                        simulation_callback_function)  # todo: might be change to the end of the timestep
 
+        self.test_temperature_list = []
+        self.test_surrounding_surface_temperature_list = []
+        self.test_current_time_list = []
+
         # Run the EnergyPlus simulation
         self.api.runtime.run_energyplus(self.state,
                                         ['-r',  # Run annual simulation
@@ -228,6 +248,10 @@ class EpSimulationInstance:
                                          '-d', self.output_dir,  # Output directory
                                          self.idf_file]  # Input IDF file
                                         )
+
+        return [deepcopy(self.test_temperature_list),
+                deepcopy(self.test_surrounding_surface_temperature_list),
+                deepcopy(self.test_current_time_list)]
 
 
 def run_simulation_wrapper(simulation_instance: EpSimulationInstance, shared_memory_name: str,
