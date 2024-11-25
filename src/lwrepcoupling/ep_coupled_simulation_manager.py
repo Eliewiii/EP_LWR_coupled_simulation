@@ -1,8 +1,11 @@
 """
 Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus among multiple buildings.
 """
-import numpy as np
 import os
+
+import shutil
+
+import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import shared_memory, Manager
 
@@ -10,16 +13,50 @@ from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
 
 
 class EpLwrSimulationManager:
-    def __init__(self):
+    def __init__(self, path_output_dir, path_epw, path_energyplus_dir, ):
+        """
+        Initialize the EnergyPlus simulation manager for the coupled long-wave radiation (LWR) simulation.
+        :param path_output_dir: Path to the output directory, where the simulation will be run. It can be either
+         an existing empty directory or a new directory that will be created.
+        :param path_epw: Path to the EPW (weather) file for the simulation.
+        :param path_energyplus_dir: Path to the EnergyPlus directory, where the EnergyPlus executable is located.
+        """
         # Simulation
         self._building_id_list = []
         self._ep_simulation_instance_dict = []
-
-        # Input variables
+        # Paths to the output directory, EPW file, and EnergyPlus directory
         self._path_output_dir = None
         self._path_epw = None
+        self._path_energyplus_dir = None
+        self.set_paths_attributes(path_output_dir, path_epw, path_energyplus_dir)
 
-        #
+    def set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
+        """
+        Set the paths to the output directory, EPW file, and EnergyPlus directory.
+        :param path_output_dir:
+        :param path_epw:
+        :param path_energyplus_dir:
+        """
+        # Check if the EPW file exists
+        if not os.path.exists(path_epw):
+            raise FileNotFoundError(f"EPW file not found at {path_epw}")
+        self._path_epw = path_epw
+        # Check if energyplus directory exists
+        if not os.path.exists(path_energyplus_dir):
+            raise FileNotFoundError(f"EnergyPlus directory not found at {path_energyplus_dir}.\n"
+                                    f"Check if the path is correct. You might have a different verison of EnergyPlus.")
+        self._path_energyplus_dir = path_energyplus_dir
+        # Check if the output directory exists
+        if not os.path.exists(path_output_dir):
+            os.makedirs(path_output_dir)
+            print(f"Output directory created at {path_output_dir}")
+        # Check if not empty
+        elif not os.listdir(path_output_dir):
+            pass
+        else:
+            raise FileExistsError(
+                f"Output directory already exists at {path_output_dir} and is not empty. Please empty it or choose another directory.")
+        self._path_output_dir = path_output_dir
 
     # -----------------------------------------------------#
     # --------------------- Properties --------------------#
@@ -34,7 +71,11 @@ class EpLwrSimulationManager:
         return sum([len(ep_simulation_instance.outdoor_surface_name_list) for ep_simulation_instance in
                     self._ep_simulation_instance_dict])
 
-    def add_building(self, building_id, path_idf, path_energyplus_dir, oudoor_surface_name_list, vf_matrices):
+    # -----------------------------------------------------#
+
+    #
+
+    def add_building(self, building_id, path_idf):
         """
         Add a building to the simulation manager.
 
@@ -43,16 +84,18 @@ class EpLwrSimulationManager:
         """
         # Create an EnergyPlus simulation instance for the building
         ep_simulation_instance = EpSimulationInstance(
+            identifier=building_id,
             path_idf=path_idf,
             path_epw=self._path_epw,
             path_output_dir=os.path.join(self._path_output_dir, f"building_{building_id}"),
-            path_energyplus_dir=path_energyplus_dir,
+            path_energyplus_dir=self._path_energyplus_dir,
             simulation_index=self.num_building
         )
-        ep_simulation_instance.set_outdoor_surfaces_and_view_factors(oudoor_surface_name_list, vf_matrices,
-                                                                     manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
-        self._building_id_list.append(building_id)
+        # ep_simulation_instance.set_outdoor_surfaces_and_view_factors(oudoor_surface_name_list, vf_matrices,
+        #                                                              manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
+        # self._building_id_list.append(building_id)
         self._ep_simulation_instance_dict.append(ep_simulation_instance)
+
 
     def set_outdoor_surfaces_and_view_factors(self):
         """
@@ -87,7 +130,8 @@ class EpLwrSimulationManager:
             # processes have reached the barrier
             synch_point_barrier = manager.Barrier(self.num_building)
             # Create shared memory for float64 data (enough for all processes' lists)
-            shm = shared_memory.SharedMemory(create=True, size=shared_memory_array_size* np.float64().itemsize)
+            shm = shared_memory.SharedMemory(create=True,
+                                             size=shared_memory_array_size * np.float64().itemsize)
 
             # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
             try:
