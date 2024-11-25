@@ -101,11 +101,13 @@ class EpLwrSimulationManager:
             shutil.rmtree(ep_simulation_instance.path_output_dir)
             os.makedirs(ep_simulation_instance.path_output_dir)
 
-        ep_simulation_instance.set_outdoor_surfaces_and_view_factors(outdoor_surface_name_list,
-                                                                     outdoor_surface_surrounding_surface_vf_dict,
-                                                                     outdoor_surface_sky_vf_dict,
-                                                                     outdoor_surface_ground_vf_dict,
-                                                                     manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
+        ep_simulation_instance.set_outdoor_surfaces_and_view_factors(
+            outdoor_surface_name_list=outdoor_surface_name_list,
+            outdoor_surface_surrounding_surface_vf_dict=outdoor_surface_surrounding_surface_vf_dict,
+            outdoor_surface_sky_vf_dict=outdoor_surface_sky_vf_dict,
+            outdoor_surface_ground_vf_dict=outdoor_surface_ground_vf_dict,
+            manager_num_outdoor_surfaces=self.num_outdoor_surfaces
+        )
 
         # Set LWR VF matrices
         ep_simulation_instance.set_vf_matrices(vf_matrix, vf_eps_matrix)

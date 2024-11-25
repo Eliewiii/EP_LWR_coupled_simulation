@@ -67,8 +67,12 @@ class EpSimulationInstance:
         """
         Set the outdoor surfaces and the view factors for the simulation.
         :param outdoor_surface_name_list: list, List of the names of the outdoor surfaces
-
-        :param vf_matrices: list, List of the view factor matrices
+        :param outdoor_surface_surrounding_surface_vf_dict: dict, Dictionary of the cumulative view factors between the outdoor
+        surfaces and the surrounding surfaces
+        :param outdoor_surface_sky_vf_dict: dict, Dictionary of the view factors between the outdoor surfaces and the sky
+        :param outdoor_surface_ground_vf_dict: dict, Dictionary of the view factors between the outdoor surfaces and the ground
+        :param manager_num_outdoor_surfaces: int, The number of outdoor surfaces in the manager to set the index boundaries
+        for the access to the shared memory
         :return:
         """
         # Set surfaces
@@ -252,7 +256,7 @@ class EpSimulationInstance:
         with shared_memory_lock:
             # todo: need to indicated properly the start and end index of the shared memory
             # Here we are writing the list as a slice of the shared memory
-            shared_array[self.surface_index_min:self.surface_index_max] = np.array(
+            shared_array[self.surface_index_min:self.surface_index_max+1] = np.array(   #  +1 to include the last index
                 surface_temperatures_list) ** 4  # directly give the temperatures power 4
 
         # wait for the other building to write down its surface temperatures
