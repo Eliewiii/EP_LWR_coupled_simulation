@@ -3,7 +3,7 @@ Test the synchronization of the simulation with the API
 """
 
 
-from src.lwrepcoulping.ep_coupled_simulation_manager import EpLwrSimulationManager
+from src.lwrepcoupling.ep_coupled_simulation_manager import EpLwrSimulationManager
 
 # Inputs
 path_energyplus_dir = r"C:\EnergyPlusV23-2-0"

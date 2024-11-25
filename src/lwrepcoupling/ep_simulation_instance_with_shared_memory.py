@@ -12,6 +12,7 @@ from typing import List
 from copy import deepcopy
 
 from src.pyenergyplus.api import EnergyPlusAPI
+from .lwr_idf_additionnal_strings import generate_surface_lwr_idf_additional_string,name_surrounding_surface_temperature_schedule
 
 
 class EpSimulationInstance:
@@ -77,11 +78,11 @@ class EpSimulationInstance:
 
     def adjust_idf(self):
         """
-
-        :return:
+        Make a copy of the idf in the directory of the simulation and add the additional strings for the LWR coupling.
+        It also generates the schedule names for the surrounding surface temperature.
         """
         # Generate the additional strings
-        additional_strings = self.generate_additional_strings()
+        additional_strings = self.generate_idfs_additional_strings()
         # Make a copy of the original IDF file to the output directory
         self.path_simulated_idf = os.path.join(self.path_output_dir, f"in.idf")
         shutil.copy(self.path_original_idf, self.path_simulated_idf)
@@ -89,11 +90,24 @@ class EpSimulationInstance:
         with open(self.path_simulated_idf, 'a') as file:
             file.write(additional_strings)
 
-    def generate_additional_strings(self):
+    def generate_idfs_additional_strings(self):
         """
-
+        Generate the additional strings to add to the IDF file for the LWR coupling.
+        Consist of the generation of a SurfaceProperty:LocalEnvironment and a SurfaceProperty:SurroundingSurfaces for each
+        outdoor surface, with temperature schedule for the surrounding surfaces to be actuated to account for the LWR.
         :return:
         """
+        additional_strings = ""
+        for surface_name in self.outdoor_surface_name_list:
+            additional_strings += generate_surface_lwr_idf_additional_string(
+                surface_name=surface_name,
+                cumulated_ext_surf_view_factor=self.outdoor_surface_surrounding_surface_vf_dict[surface_name],
+                sky_view_factor=self.outdoor_surface_sky_vf_dict[surface_name],
+                ground_view_factor=self.outdoor_surface_ground_vf_dict[surface_name]
+            )
+            # Add the schedule name to the dictionary
+            self.schedule_name_dict[surface_name] = name_surrounding_surface_temperature_schedule(surface_name)
+        return additional_strings
 
     def request_variables_before_running_simulation(self):
         """
@@ -244,7 +258,7 @@ class EpSimulationInstance:
         self.test_current_time_list.append(self.api.exchange.current_sim_time(state))
         self.test_temperature_list.append(surface_temperatures_list)
         self.test_surrounding_surface_temperature_list.append(mean_surface_temperature)
-        #-----------------#
+        # -----------------#
 
     def run_ep_simulation(self, shared_memory_name, shared_memory_array_size, shared_memory_lock,
                           synch_point_barrier):
@@ -272,10 +286,10 @@ class EpSimulationInstance:
                                                                         self.initialize_actuator_handler_callback_function)
         self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
                                                                         self.init_surface_temperature_handlers_call_back_function)
-        #-- For testing --#
+        # -- For testing --#
         self.api.runtime.callback_after_new_environment_warmup_complete(self.state,
                                                                         self.init_surrounding_surface_schedule_handlers_call_back_function_for_testing)
-        #-----------------#
+        # -----------------#
         self.api.runtime.callback_after_predictor_before_hvac_managers(self.state,
                                                                        simulation_callback_function)  # todo: might be change to the end of the timestep
 
