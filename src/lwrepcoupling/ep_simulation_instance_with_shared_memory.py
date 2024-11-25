@@ -55,28 +55,40 @@ class EpSimulationInstance:
         self.f_matrix = None
 
         # Synchronization attributes
-        self.simulation_index = simulation_index  # Index of the simulation, to synchronize the simulation and
+        self._simulation_index = simulation_index  # Index of the simulation, to synchronize the simulation and
         self.surface_index_min = None
         self.surface_index_max = None
 
     def set_outdoor_surfaces_and_view_factors(self, outdoor_surface_name_list: List[str],
-                                              vf_matrices: List[np.ndarray],
+                                              outdoor_surface_surrounding_surface_vf_dict: dict,
+                                              outdoor_surface_sky_vf_dict: dict,
+                                              outdoor_surface_ground_vf_dict: dict,
                                               manager_num_outdoor_surfaces: int):
         """
         Set the outdoor surfaces and the view factors for the simulation.
         :param outdoor_surface_name_list: list, List of the names of the outdoor surfaces
+
         :param vf_matrices: list, List of the view factor matrices
         :return:
         """
         # Set surfaces
         self.outdoor_surface_name_list = outdoor_surface_name_list
-        # Set Matrices
-        # self.f_epsilon_matrix = vf_matrices[0]
-        # self.f_matrix = vf_matrices[1]
-
-        #
+        self.outdoor_surface_surrounding_surface_vf_dict = outdoor_surface_surrounding_surface_vf_dict
+        self.outdoor_surface_sky_vf_dict = outdoor_surface_sky_vf_dict
+        self.outdoor_surface_ground_vf_dict = outdoor_surface_ground_vf_dict
+        # Set the index boundaries for the access to the shared memory
         self.surface_index_min = manager_num_outdoor_surfaces
         self.surface_index_max = manager_num_outdoor_surfaces + len(outdoor_surface_name_list) - 1
+
+    def set_vf_matrices(self, vf_matrix, vf_eps_matrix):
+        """
+
+        :param vf_matrix:
+        :param vf_eps_matrix:
+        :return:
+        """
+
+        # Todo :
 
     def adjust_idf(self):
         """
@@ -121,7 +133,7 @@ class EpSimulationInstance:
         """
         for surface_name in self.outdoor_surface_name_list:
             self._api.exchange.request_variable(self._state, "SURFACE OUTSIDE FACE TEMPERATURE",
-                                               surface_name)
+                                                surface_name)
 
     def request_additional_variables_before_running_simulation_for_testing(self):
         """
@@ -130,7 +142,7 @@ class EpSimulationInstance:
         """
         for surface_name in self.outdoor_surface_name_list:
             self._api.exchange.request_variable(self._state, "Schedule Value",
-                                               self.schedule_name_dict[surface_name])
+                                                self.schedule_name_dict[surface_name])
 
     def initialize_actuator_handler_callback_function(self):
         """
@@ -138,10 +150,11 @@ class EpSimulationInstance:
         :return:
         """
         for surface_name in self.outdoor_surface_name_list:
-            schedule_actuator_handle = self._api.exchange.get_actuator_handle(self._state, "Schedule:Constant",
-                                                                             "Schedule Value",
-                                                                             self.schedule_name_dict[
-                                                                                 surface_name])
+            schedule_actuator_handle = self._api.exchange.get_actuator_handle(self._state,
+                                                                              "Schedule:Constant",
+                                                                              "Schedule Value",
+                                                                              self.schedule_name_dict[
+                                                                                  surface_name])
             if schedule_actuator_handle == -1:
                 raise ValueError(
                     f"Failed to create actuator for schedule {self.schedule_name_dict[surface_name]}")
@@ -155,8 +168,8 @@ class EpSimulationInstance:
         """
         for surface_name in self.outdoor_surface_name_list:
             self.surface_temp_handler_dict[surface_name] = self._api.exchange.get_variable_handle(self._state,
-                                                                                                 "SURFACE OUTSIDE FACE TEMPERATURE",
-                                                                                                 surface_name)
+                                                                                                  "SURFACE OUTSIDE FACE TEMPERATURE",
+                                                                                                  surface_name)
 
     def init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self):
         """
@@ -166,7 +179,7 @@ class EpSimulationInstance:
         for surface_name in self.outdoor_surface_name_list:
             self.surrounding_surface_temperature_schedule_temperature_handler_dict[
                 surface_name] = self._api.exchange.get_variable_handle(self._state, "Schedule Value",
-                                                                      self.schedule_name_dict[surface_name])
+                                                                       self.schedule_name_dict[surface_name])
 
     def get_surface_temperature_of_all_outdoor_surfaces_in_kelvin(self) -> List[float]:
         """
@@ -177,22 +190,22 @@ class EpSimulationInstance:
         for surface_temperature_handle in self.surface_temperature_handle_list:
             surface_temperatures_list.append(
                 self._api.exchange.get_variable_value(self._state,
-                                                     surface_temperature_handle) + 273.15)  # convert to Kelvin
+                                                      surface_temperature_handle) + 273.15)  # convert to Kelvin
         return surface_temperatures_list
 
-    def write_surface_temperatures_in_file(self, current_time):
-        """
-
-        :return:
-        """
-        surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
-        # write down the surface temperatures in a file with tmp extension to avoid reading it before it is fully written
-        with open(os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
-                  'a') as file:
-            file.write(f"{current_time} {surface_temperatures_list}\n")
-        # Rename the file to remove the .tmp extension
-        os.rename(os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
-                  os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.txt"))
+    # def write_surface_temperatures_in_file(self, current_time):
+    #     """
+    #
+    #     :return:
+    #     """
+    #     surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
+    #     # write down the surface temperatures in a file with tmp extension to avoid reading it before it is fully written
+    #     with open(os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
+    #               'a') as file:
+    #         file.write(f"{current_time} {surface_temperatures_list}\n")
+    #     # Rename the file to remove the .tmp extension
+    #     os.rename(os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
+    #               os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.txt"))
 
     # def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock,
     #                                          synch_point_barrier):
@@ -249,12 +262,12 @@ class EpSimulationInstance:
         # Set the surrounding surface temperature to the average of the surface temperatures
         for surface_name in self.outdoor_surface_name_list:
             self._api.exchange.set_actuator_value(state,
-                                                 self.surrounding_surface_temperature_schedule_temperature_handler_dict[
-                                                     surface_name], mean_surface_temperature)
+                                                  self.surrounding_surface_temperature_schedule_temperature_handler_dict[
+                                                      surface_name], mean_surface_temperature)
             # get the current value of the schedule
             current_value = self._api.exchange.get_variable_value(state,
-                                                                 self.surrounding_surface_temperature_schedule_temperature_handler_list[
-                                                                     surface_name])
+                                                                  self.surrounding_surface_temperature_schedule_temperature_handler_list[
+                                                                      surface_name])
             assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
         # -- For testing --#
         # Get current simulation time (in hours)
@@ -286,15 +299,15 @@ class EpSimulationInstance:
 
         # Set the callback functions to run at the various moment of the simulation
         self._api.runtime.callback_after_new_environment_warmup_complete(self._state,
-                                                                        self.initialize_actuator_handler_callback_function)
+                                                                         self.initialize_actuator_handler_callback_function)
         self._api.runtime.callback_after_new_environment_warmup_complete(self._state,
-                                                                        self.init_surface_temperature_handlers_call_back_function)
+                                                                         self.init_surface_temperature_handlers_call_back_function)
         # -- For testing --#
         self._api.runtime.callback_after_new_environment_warmup_complete(self._state,
-                                                                        self.init_surrounding_surface_schedule_handlers_call_back_function_for_testing)
+                                                                         self.init_surrounding_surface_schedule_handlers_call_back_function_for_testing)
         # -----------------#
         self._api.runtime.callback_after_predictor_before_hvac_managers(self._state,
-                                                                       simulation_callback_function)  # todo: might be change to the end of the timestep
+                                                                        simulation_callback_function)  # todo: might be change to the end of the timestep
 
         self.test_temperature_list = []
         self.test_surrounding_surface_temperature_list = []
@@ -302,11 +315,11 @@ class EpSimulationInstance:
 
         # Run the EnergyPlus simulation
         self._api.runtime.run_energyplus(self._state,
-                                        ['-r',  # Run annual simulation
-                                         '-w', path_epw,  # Weather file
-                                         '-d', self._path_output_dir,  # Output directory
-                                         self._path_simulated_idf]  # Input IDF file
-                                        )
+                                         ['-r',  # Run annual simulation
+                                          '-w', path_epw,  # Weather file
+                                          '-d', self._path_output_dir,  # Output directory
+                                          self._path_simulated_idf]  # Input IDF file
+                                         )
 
         return self
 

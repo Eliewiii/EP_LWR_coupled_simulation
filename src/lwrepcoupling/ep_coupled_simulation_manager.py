@@ -9,11 +9,13 @@ import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import shared_memory, Manager
 
+from typing import List
+
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
 
 
 class EpLwrSimulationManager:
-    def __init__(self, path_output_dir, path_epw, path_energyplus_dir, ):
+    def __init__(self, path_output_dir, path_epw, path_energyplus_dir):
         """
         Initialize the EnergyPlus simulation manager for the coupled long-wave radiation (LWR) simulation.
         :param path_output_dir: Path to the output directory, where the simulation will be run. It can be either
@@ -23,7 +25,7 @@ class EpLwrSimulationManager:
         """
         # Simulation
         self._building_id_list = []
-        self._ep_simulation_instance_dict = []
+        self._ep_simulation_instance_dict = {}
         # Paths to the output directory, EPW file, and EnergyPlus directory
         self._path_output_dir = None
         self._path_epw = None
@@ -69,13 +71,15 @@ class EpLwrSimulationManager:
     @property
     def num_outdoor_surfaces(self):
         return sum([len(ep_simulation_instance.outdoor_surface_name_list) for ep_simulation_instance in
-                    self._ep_simulation_instance_dict])
+                    self._ep_simulation_instance_dict.values()])
 
     # -----------------------------------------------------#
 
     #
 
-    def add_building(self, building_id, path_idf):
+    def add_building(self, building_id: str, path_idf: str, outdoor_surface_name_list: List[str],
+                     outdoor_surface_surrounding_surface_vf_dict: dict, outdoor_surface_sky_vf_dict: dict,
+                     outdoor_surface_ground_vf_dict: dict, vf_matrix=None, vf_eps_matrix=None):
         """
         Add a building to the simulation manager.
 
@@ -86,16 +90,38 @@ class EpLwrSimulationManager:
         ep_simulation_instance = EpSimulationInstance(
             identifier=building_id,
             path_idf=path_idf,
-            path_epw=self._path_epw,
             path_output_dir=os.path.join(self._path_output_dir, f"building_{building_id}"),
             path_energyplus_dir=self._path_energyplus_dir,
             simulation_index=self.num_building
         )
-        # ep_simulation_instance.set_outdoor_surfaces_and_view_factors(oudoor_surface_name_list, vf_matrices,
-        #                                                              manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
-        # self._building_id_list.append(building_id)
-        self._ep_simulation_instance_dict.append(ep_simulation_instance)
+        # Make the folder for the building
+        if not os.path.exists(ep_simulation_instance.path_output_dir):
+            os.makedirs(ep_simulation_instance.path_output_dir)
+        else:
+            shutil.rmtree(ep_simulation_instance.path_output_dir)
+            os.makedirs(ep_simulation_instance.path_output_dir)
 
+        ep_simulation_instance.set_outdoor_surfaces_and_view_factors(outdoor_surface_name_list,
+                                                                     outdoor_surface_surrounding_surface_vf_dict,
+                                                                     outdoor_surface_sky_vf_dict,
+                                                                     outdoor_surface_ground_vf_dict,
+                                                                     manager_num_outdoor_surfaces=self.num_outdoor_surfaces)
+
+        # Set LWR VF matrices
+        ep_simulation_instance.set_vf_matrices(vf_matrix, vf_eps_matrix)
+
+        self._building_id_list.append(building_id)
+        self._ep_simulation_instance_dict[building_id] = ep_simulation_instance
+
+    def set_vf_matrices(self, vf_matrix, vf_eps_matrix):
+        """
+
+        :param vf_matrix:
+        :param vf_eps_matrix:
+        :return:
+        """
+
+        # Todo :
 
     def set_outdoor_surfaces_and_view_factors(self):
         """
