@@ -16,9 +16,6 @@ from .lwr_idf_additionnal_strings import generate_surface_lwr_idf_additional_str
 
 
 class EpSimulationInstance:
-    """
-
-    """
 
     def __init__(self, identifier: str, path_idf: str, path_output_dir: str, path_energyplus_dir: str,
                  simulation_index: int):
@@ -41,10 +38,10 @@ class EpSimulationInstance:
         self._path_output_dir = path_output_dir
 
         # Geometry
-        self.outdoor_surface_name_list = []
-        self.outdoor_surface_surrounding_surface_vf_dict = {}
-        self.outdoor_surface_sky_vf_dict = {}
-        self.outdoor_surface_ground_vf_dict = {}
+        self._outdoor_surface_name_list = []
+        self._outdoor_surface_surrounding_surface_vf_dict = {}
+        self._outdoor_surface_sky_vf_dict = {}
+        self._outdoor_surface_ground_vf_dict = {}
         # todo: potentially need to add the emissivity or other related parameters
 
         # Handlers
@@ -67,6 +64,18 @@ class EpSimulationInstance:
         self.test_surrounding_surface_temperature_list = []
         self.test_current_time_list = []
 
+    # -----------------------------------------------------#
+    # --------------------- Properties --------------------#
+    # -----------------------------------------------------#
+
+    @property
+    def num_building(self):
+        return len(self._building_id_list)
+
+    # -----------------------------------------------------#
+    # ------------------ Init Method ----------------------#
+    # -----------------------------------------------------#
+
     def set_outdoor_surfaces_and_view_factors(self, outdoor_surface_name_list: List[str],
                                               outdoor_surface_surrounding_surface_vf_dict: dict,
                                               outdoor_surface_sky_vf_dict: dict,
@@ -84,10 +93,10 @@ class EpSimulationInstance:
         :return:
         """
         # Set surfaces
-        self.outdoor_surface_name_list = outdoor_surface_name_list
-        self.outdoor_surface_surrounding_surface_vf_dict = outdoor_surface_surrounding_surface_vf_dict
-        self.outdoor_surface_sky_vf_dict = outdoor_surface_sky_vf_dict
-        self.outdoor_surface_ground_vf_dict = outdoor_surface_ground_vf_dict
+        self._outdoor_surface_name_list = outdoor_surface_name_list
+        self._outdoor_surface_surrounding_surface_vf_dict = outdoor_surface_surrounding_surface_vf_dict
+        self._outdoor_surface_sky_vf_dict = outdoor_surface_sky_vf_dict
+        self._outdoor_surface_ground_vf_dict = outdoor_surface_ground_vf_dict
         # Set the index boundaries for the access to the shared memory
         self._surface_index_min = manager_num_outdoor_surfaces
         self._surface_index_max = manager_num_outdoor_surfaces + len(outdoor_surface_name_list) - 1
@@ -124,17 +133,21 @@ class EpSimulationInstance:
         :return:
         """
         additional_strings = ""
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             additional_strings += generate_surface_lwr_idf_additional_string(
                 surface_name=surface_name,
-                cumulated_ext_surf_view_factor=self.outdoor_surface_surrounding_surface_vf_dict[surface_name],
-                sky_view_factor=self.outdoor_surface_sky_vf_dict[surface_name],
-                ground_view_factor=self.outdoor_surface_ground_vf_dict[surface_name]
+                cumulated_ext_surf_view_factor=self._outdoor_surface_surrounding_surface_vf_dict[surface_name],
+                sky_view_factor=self._outdoor_surface_sky_vf_dict[surface_name],
+                ground_view_factor=self._outdoor_surface_ground_vf_dict[surface_name]
             )
             # Add the schedule name to the dictionary
             self._schedule_name_dict[surface_name] = name_surrounding_surface_temperature_schedule(
                 surface_name)
         return additional_strings
+
+    # -----------------------------------------------------#
+    # ----------- EnergyPlus API Preparation --------------#
+    # -----------------------------------------------------#
 
     def request_variables_before_running_simulation(self):
         """
@@ -143,7 +156,7 @@ class EpSimulationInstance:
 
         A PRIORI DONE
         """
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             self._api.exchange.request_variable(self._state, "SURFACE OUTSIDE FACE TEMPERATURE",
                                                 surface_name)
 
@@ -152,7 +165,7 @@ class EpSimulationInstance:
 
         :return:
         """
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             self._api.exchange.request_variable(self._state, "Schedule Value",
                                                 self._schedule_name_dict[surface_name])
 
@@ -161,7 +174,7 @@ class EpSimulationInstance:
 
         :return:
         """
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             schedule_actuator_handle = self._api.exchange.get_actuator_handle(self._state,
                                                                               "Schedule:Constant",
                                                                               "Schedule Value",
@@ -178,7 +191,7 @@ class EpSimulationInstance:
 
         :return:
         """
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             self._surface_temp_handler_dict[surface_name] = self._api.exchange.get_variable_handle(self._state,
                                                                                                    "SURFACE OUTSIDE FACE TEMPERATURE",
                                                                                                    surface_name)
@@ -188,7 +201,7 @@ class EpSimulationInstance:
 
         :return:
         """
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             self._surrounding_surface_temperature_schedule_temperature_handler_dict[
                 surface_name] = self._api.exchange.get_variable_handle(self._state, "Schedule Value",
                                                                        self._schedule_name_dict[surface_name])
@@ -199,7 +212,7 @@ class EpSimulationInstance:
         :return: list,  List of surface temperatures
         """
         surface_temperatures_list = []
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             surface_temperatures_list.append(
                 self._api.exchange.get_variable_value(self._state,
                                                       self._surface_temp_handler_dict[
@@ -248,6 +261,10 @@ class EpSimulationInstance:
     #     # Delete the file with the surface temperatures
     #     # os.remove(os.path.join(self._path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
 
+    # -----------------------------------------------------#
+    # ------------ Main Callback Function -----------------#
+    # -----------------------------------------------------#
+
     def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock,
                                                   synch_point_barrier):
         """
@@ -274,7 +291,7 @@ class EpSimulationInstance:
         # Compute a somewhat mean surface temperature, to test the synchronization, only one surface per building will be used
         mean_surface_temperature = np.mean(shared_array ** (1 / 4)) - 273.15  # convert back to Celsius
         # Set the surrounding surface temperature to the average of the surface temperatures
-        for surface_name in self.outdoor_surface_name_list:
+        for surface_name in self._outdoor_surface_name_list:
             self._api.exchange.set_actuator_value(state,
                                                   self._schedule_actuator_handle_dict[
                                                       surface_name], mean_surface_temperature)
@@ -289,6 +306,10 @@ class EpSimulationInstance:
         self.test_temperature_list.append(deepcopy(surface_temperatures_list))
         self.test_surrounding_surface_temperature_list.append(mean_surface_temperature)
         # -----------------#
+
+    # -----------------------------------------------------#
+    # ------------ Run Simulation Function ----------------#
+    # -----------------------------------------------------#
 
     def run_ep_simulation(self, shared_memory_name, shared_memory_array_size, shared_memory_lock,
                           synch_point_barrier, path_epw):
@@ -310,6 +331,7 @@ class EpSimulationInstance:
 
         # -- For testing --#
         self.request_additional_variables_before_running_simulation_for_testing()
+
         # -----------------#
 
         # Make wrapper for the main callback function
@@ -335,14 +357,17 @@ class EpSimulationInstance:
         # -----------------#
 
         self._api.runtime.callback_end_system_timestep_after_hvac_reporting(self._state,
-                                                                        simulation_callback_function)  # todo: might be change to the end of the timestep
+                                                                            simulation_callback_function)  # todo: might be change to the end of the timestep
 
         # Run the EnergyPlus simulation
-        self._api.runtime.run_energyplus(self._state,
-                                         ['-r',  # Run annual simulation
-                                          '-w', path_epw,  # Weather file
-                                          '-d', self._path_output_dir,  # Output directory
-                                          self._path_simulated_idf]  # Input IDF file
-                                         )
+        self._api.runtime.run_energyplus(
+            self._state,
+            [
+                '-r',  # Run annual simulation
+                '-w', path_epw,  # Weather file
+                '-d', self._path_output_dir,  # Output directory
+                self._path_simulated_idf  # Input IDF file
+            ]
+        )
 
         return self
