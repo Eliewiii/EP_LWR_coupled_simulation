@@ -15,6 +15,9 @@ from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
 
 
 class EpLwrSimulationManager:
+    # -----------------------------------------------------#
+    # -------------------- Initialization------------------#
+    # -----------------------------------------------------#
     def __init__(self, path_output_dir, path_epw, path_energyplus_dir):
         """
         Initialize the EnergyPlus simulation manager for the coupled long-wave radiation (LWR) simulation.
@@ -30,9 +33,9 @@ class EpLwrSimulationManager:
         self._path_output_dir = None
         self._path_epw = None
         self._path_energyplus_dir = None
-        self.set_paths_attributes(path_output_dir, path_epw, path_energyplus_dir)
+        self._set_paths_attributes(path_output_dir, path_epw, path_energyplus_dir)
 
-    def set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
+    def _set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
         """
         Set the paths to the output directory, EPW file, and EnergyPlus directory.
         :param path_output_dir:
@@ -74,8 +77,8 @@ class EpLwrSimulationManager:
                     self._ep_simulation_instance_dict.values()])
 
     # -----------------------------------------------------#
-
-    #
+    # --------------------- Methods -----------------------#
+    # -----------------------------------------------------#
 
     def add_building(self, building_id: str, path_idf: str, outdoor_surface_name_list: List[str],
                      outdoor_surface_surrounding_surface_vf_dict: dict, outdoor_surface_sky_vf_dict: dict,
@@ -108,52 +111,29 @@ class EpLwrSimulationManager:
             outdoor_surface_ground_vf_dict=outdoor_surface_ground_vf_dict,
             manager_num_outdoor_surfaces=self.num_outdoor_surfaces
         )
-
+        # Generate a copy of the IDF with additional strings for the LWR computation
+        ep_simulation_instance.adjust_idf()
         # Set LWR VF matrices
         ep_simulation_instance.set_vf_matrices(vf_matrix, vf_eps_matrix)
-
+        # Add the building to the simulation manager
         self._building_id_list.append(building_id)
         self._ep_simulation_instance_dict[building_id] = ep_simulation_instance
 
-    def set_vf_matrices(self, vf_matrix, vf_eps_matrix):
-        """
-
-        :param vf_matrix:
-        :param vf_eps_matrix:
-        :return:
-        """
-
-        # Todo :
-
-    def set_outdoor_surfaces_and_view_factors(self):
-        """
-
-        """
-        # todo : implement this method
-
-    def adjust_buildings_idf(self):
-        """
-
-        :return:
-        """
-        for ep_simulation_instance in self._ep_simulation_instance_dict.values():
-            ep_simulation_instance.adjust_idf()
 
     def run_lwr_coupled_simulation(self):
         """
-
+        Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
         :return:
         """
 
-        # todo : identify the size of array_shape according to the number of outdoor surfaces of the buildings
-        # need to be in the proper format
-        shared_memory_array_size = self.num_outdoor_surfaces * np.float64().itemsize
+        # To do: Make sure it's the proper size
+        shared_memory_array_size = self.num_outdoor_surfaces * np.float64().itemsize  # 8 bytes per surface
 
         # Run the simulation under a Manager context to share memory, locks, and barriers
         with Manager() as manager:
 
             # Initialize a lock to limit writing access to shared memory
-            shared_memory_lock = manager.Lock()
+            shared_memory_lock = manager.Lock()  # Todo: Check if it's necessary as no overlapping writing is done
             # Initialize a barrier to synchronize processes, when called with .wait() all processes will wait until all
             # processes have reached the barrier
             synch_point_barrier = manager.Barrier(self.num_building)
@@ -165,14 +145,15 @@ class EpLwrSimulationManager:
             try:
                 # Start tasks
                 results_list = []
-                with ProcessPoolExecutor(max_workers=self.num_building) as executor:
+                with ProcessPoolExecutor() as executor:
                     futures = [
                         executor.submit(
                             ep_simulation_instance.run_ep_simulation,
-                            shm.name,
-                            shared_memory_array_size,
-                            shared_memory_lock,
-                            synch_point_barrier,
+                            shared_memory_name=shm.name,
+                            shared_memory_array_size=shared_memory_array_size,
+                            shared_memory_lock=shared_memory_lock,
+                            synch_point_barrier=synch_point_barrier,
+                            path_epw=self._path_epw
                         )
                         for ep_simulation_instance in self._ep_simulation_instance_list
                     ]
