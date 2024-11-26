@@ -15,10 +15,12 @@ from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
 
 
 class EpLwrSimulationManager:
+
     # -----------------------------------------------------#
     # -------------------- Initialization------------------#
     # -----------------------------------------------------#
-    def __init__(self, path_output_dir, path_epw, path_energyplus_dir):
+
+    def __init__(self, path_output_dir:str, path_epw:str, path_energyplus_dir:str):
         """
         Initialize the EnergyPlus simulation manager for the coupled long-wave radiation (LWR) simulation.
         :param path_output_dir: Path to the output directory, where the simulation will be run. It can be either
@@ -85,9 +87,15 @@ class EpLwrSimulationManager:
                      outdoor_surface_ground_vf_dict: dict, vf_matrix=None, vf_eps_matrix=None):
         """
         Add a building to the simulation manager.
-
         :param building_id: The building ID.
         :param path_idf: The path to the IDF file for the building.
+        :param outdoor_surface_name_list: List of outdoor surface names in the IDF file.
+        :param outdoor_surface_surrounding_surface_vf_dict: Dictionary of view factors from outdoor surfaces to other
+        outdoor surfaces.
+        :param outdoor_surface_sky_vf_dict: Dictionary of view factors from outdoor surfaces to the sky.
+        :param outdoor_surface_ground_vf_dict: Dictionary of view factors from outdoor surfaces to the ground.
+        :param vf_matrix: The view factor matrix for the building.
+        :param vf_eps_matrix: The view factor matrix for the building with emissivity values.
         """
         # Create an EnergyPlus simulation instance for the building
         ep_simulation_instance = EpSimulationInstance(
@@ -143,9 +151,10 @@ class EpLwrSimulationManager:
 
             # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
             try:
+                num_workers = self.num_building  # One process per building, as they should all be run in parallel
                 # Start tasks
                 results_list = []
-                with ProcessPoolExecutor() as executor:
+                with ProcessPoolExecutor(max_workers=num_workers) as executor:
                     futures = [
                         executor.submit(
                             ep_simulation_instance.run_ep_simulation,
@@ -163,6 +172,14 @@ class EpLwrSimulationManager:
                             results_list.extend(future.result())
                         except Exception as e:
                             print(f"Task generated an exception: {e}")
+
+                # Update the ep_simulation_instance_list with the results
+                for ep_simulation_instance_result in results_list:
+                    building_id = ep_simulation_instance_result.identifier
+                    self._ep_simulation_instance_dict[building_id] = ep_simulation_instance_result
+
+                # plot the temperatures todo: implement for checking
+
             finally:
                 # Cleanup
                 shm.close()
