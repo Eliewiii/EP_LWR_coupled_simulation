@@ -75,7 +75,7 @@ class EpLwrSimulationManager:
 
     @property
     def num_outdoor_surfaces(self):
-        return sum([len(ep_simulation_instance.outdoor_surface_name_list) for ep_simulation_instance in
+        return sum([ep_simulation_instance.num_outdoor_surfaces for ep_simulation_instance in
                     self._ep_simulation_instance_dict.values()])
 
     # -----------------------------------------------------#

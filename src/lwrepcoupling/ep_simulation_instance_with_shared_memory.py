@@ -60,17 +60,17 @@ class EpSimulationInstance:
         self._surface_index_max = None
 
         # Test variables to check
-        self.test_temperature_list = []
-        self.test_surrounding_surface_temperature_list = []
-        self.test_current_time_list = []
+        self._test_temperature_list = []
+        self._test_surrounding_surface_temperature_list = []
+        self._test_current_time_list = []
 
     # -----------------------------------------------------#
     # --------------------- Properties --------------------#
     # -----------------------------------------------------#
 
     @property
-    def num_building(self):
-        return len(self._building_id_list)
+    def num_outdoor_surfaces(self):
+        return len(self._outdoor_surface_name_list)
 
     # -----------------------------------------------------#
     # ------------------ Init Method ----------------------#
@@ -151,10 +151,7 @@ class EpSimulationInstance:
 
     def request_variables_before_running_simulation(self):
         """
-
-        :return:
-
-        A PRIORI DONE
+        Request the variables to access the surface temperature of the outdoor surfaces during the simulation.
         """
         for surface_name in self._outdoor_surface_name_list:
             self._api.exchange.request_variable(self._state, "SURFACE OUTSIDE FACE TEMPERATURE",
@@ -162,8 +159,8 @@ class EpSimulationInstance:
 
     def request_additional_variables_before_running_simulation_for_testing(self):
         """
-
-        :return:
+        Request the variables to access the schedule values of the surrounding surface temperature during the simulation.
+        For testing purposes only as it is not needed for the LWR computation.
         """
         for surface_name in self._outdoor_surface_name_list:
             self._api.exchange.request_variable(self._state, "Schedule Value",
@@ -171,8 +168,8 @@ class EpSimulationInstance:
 
     def initialize_actuator_handler_callback_function(self):
         """
-
-        :return:
+        Initialize the actuator handlers for the surrounding surface temperature schedules.
+        Should be run at the end of the warmup period.
         """
         for surface_name in self._outdoor_surface_name_list:
             schedule_actuator_handle = self._api.exchange.get_actuator_handle(self._state,
@@ -188,8 +185,8 @@ class EpSimulationInstance:
 
     def init_surface_temperature_handlers_call_back_function(self):
         """
-
-        :return:
+        Initialize the handlers to access the surface temperatures of the outdoor surfaces.
+        Should be run at the end of the warmup period.
         """
         for surface_name in self._outdoor_surface_name_list:
             self._surface_temp_handler_dict[surface_name] = self._api.exchange.get_variable_handle(self._state,
@@ -198,8 +195,9 @@ class EpSimulationInstance:
 
     def init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self):
         """
-
-        :return:
+        Initialize the handlers to access the schedule values of the surrounding surface temperatures.
+        Should be run at the end of the warmup period.
+        For testing purposes only as it is not needed for the LWR computation.
         """
         for surface_name in self._outdoor_surface_name_list:
             self._surrounding_surface_temperature_schedule_temperature_handler_dict[
@@ -300,11 +298,12 @@ class EpSimulationInstance:
                                                                   self._surrounding_surface_temperature_schedule_temperature_handler_dict[
                                                                       surface_name])
             assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
+
         # -- For testing --#
         # Get current simulation time (in hours)
-        self.test_current_time_list.append(self._api.exchange.current_sim_time(state))
-        self.test_temperature_list.append(deepcopy(surface_temperatures_list))
-        self.test_surrounding_surface_temperature_list.append(mean_surface_temperature)
+        self._test_current_time_list.append(self._api.exchange.current_sim_time(state))
+        self._test_temperature_list.append(deepcopy(surface_temperatures_list))
+        self._test_surrounding_surface_temperature_list.append(mean_surface_temperature)
         # -----------------#
 
     # -----------------------------------------------------#
@@ -351,6 +350,7 @@ class EpSimulationInstance:
                                                                          self.initialize_actuator_handler_callback_function)
         self._api.runtime.callback_after_new_environment_warmup_complete(self._state,
                                                                          self.init_surface_temperature_handlers_call_back_function)
+
         # -- For testing --#
         self._api.runtime.callback_after_new_environment_warmup_complete(self._state,
                                                                          self.init_surrounding_surface_schedule_handlers_call_back_function_for_testing)
