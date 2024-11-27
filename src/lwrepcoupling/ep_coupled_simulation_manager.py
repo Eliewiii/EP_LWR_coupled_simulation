@@ -98,19 +98,19 @@ class EpLwrSimulationManager:
         :param vf_eps_matrix: The view factor matrix for the building with emissivity values.
         """
         # Create an EnergyPlus simulation instance for the building
+        building_output_dir = os.path.join(self._path_output_dir, f"building_{building_id}")
         ep_simulation_instance = EpSimulationInstance(
             identifier=building_id,
             path_idf=path_idf,
-            path_output_dir=os.path.join(self._path_output_dir, f"building_{building_id}"),
-            path_energyplus_dir=self._path_energyplus_dir,
+            path_output_dir=building_output_dir,
             simulation_index=self.num_building
         )
         # Make the folder for the building
-        if not os.path.exists(ep_simulation_instance.path_output_dir):
-            os.makedirs(ep_simulation_instance.path_output_dir)
+        if not os.path.exists(building_output_dir):
+            os.makedirs(building_output_dir)
         else:
-            shutil.rmtree(ep_simulation_instance.path_output_dir)
-            os.makedirs(ep_simulation_instance.path_output_dir)
+            shutil.rmtree(building_output_dir)
+            os.makedirs(building_output_dir)
 
         ep_simulation_instance.set_outdoor_surfaces_and_view_factors(
             outdoor_surface_name_list=outdoor_surface_name_list,
@@ -162,9 +162,10 @@ class EpLwrSimulationManager:
                             shared_memory_array_size=shared_memory_array_size,
                             shared_memory_lock=shared_memory_lock,
                             synch_point_barrier=synch_point_barrier,
-                            path_epw=self._path_epw
+                            path_epw=self._path_epw,
+                            path_energyplus_dir=self._path_energyplus_dir
                         )
-                        for ep_simulation_instance in self._ep_simulation_instance_list
+                        for ep_simulation_instance in self._ep_simulation_instance_dict.values()
                     ]
                     # Wait for all processes to complete
                     for future in futures:

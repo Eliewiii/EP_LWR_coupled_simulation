@@ -17,22 +17,20 @@ from .lwr_idf_additionnal_strings import generate_surface_lwr_idf_additional_str
 
 class EpSimulationInstance:
 
-    def __init__(self, identifier: str, path_idf: str, path_output_dir: str, path_energyplus_dir: str,
-                 simulation_index: int):
+    def __init__(self, identifier: str, path_idf: str, path_output_dir: str, simulation_index: int):
         """
         Constructor of the class.
         :param identifier: str, The identifier of the building/simulation
         :param path_idf: str, The path to the IDF file of the building
         :param path_output_dir: str, The path to the output directory of the simulation
-        :param path_energyplus_dir: str, The path to the EnergyPlus directory
         :param simulation_index: int, The index of the simulation in the manager
         """
         # Identifier
         self._identifier = identifier
-        # initialize the EnergyPlus API and simulation state
-        self._api = EnergyPlusAPI(running_as_python_plugin=True, path_to_ep_folder=path_energyplus_dir)
-        self._state = self._api.state_manager.new_state()
-        #
+        # EP API and state
+        self._api = None
+        self._state = None
+        # Paths to the files and directories
         self._path_original_idf = path_idf
         self._path_simulated_idf = None
         self._path_output_dir = path_output_dir
@@ -136,7 +134,8 @@ class EpSimulationInstance:
         for surface_name in self._outdoor_surface_name_list:
             additional_strings += generate_surface_lwr_idf_additional_string(
                 surface_name=surface_name,
-                cumulated_ext_surf_view_factor=self._outdoor_surface_surrounding_surface_vf_dict[surface_name],
+                cumulated_ext_surf_view_factor=self._outdoor_surface_surrounding_surface_vf_dict[
+                    surface_name],
                 sky_view_factor=self._outdoor_surface_sky_vf_dict[surface_name],
                 ground_view_factor=self._outdoor_surface_ground_vf_dict[surface_name]
             )
@@ -166,13 +165,13 @@ class EpSimulationInstance:
             self._api.exchange.request_variable(self._state, "Schedule Value",
                                                 self._schedule_name_dict[surface_name])
 
-    def initialize_actuator_handler_callback_function(self):
+    def initialize_actuator_handler_callback_function(self,state):
         """
         Initialize the actuator handlers for the surrounding surface temperature schedules.
         Should be run at the end of the warmup period.
         """
         for surface_name in self._outdoor_surface_name_list:
-            schedule_actuator_handle = self._api.exchange.get_actuator_handle(self._state,
+            schedule_actuator_handle = self._api.exchange.get_actuator_handle(state,
                                                                               "Schedule:Constant",
                                                                               "Schedule Value",
                                                                               self._schedule_name_dict[
@@ -183,17 +182,18 @@ class EpSimulationInstance:
             else:
                 self._schedule_actuator_handle_dict[surface_name] = schedule_actuator_handle
 
-    def init_surface_temperature_handlers_call_back_function(self):
+    def init_surface_temperature_handlers_call_back_function(self,state):
         """
         Initialize the handlers to access the surface temperatures of the outdoor surfaces.
         Should be run at the end of the warmup period.
         """
         for surface_name in self._outdoor_surface_name_list:
-            self._surface_temp_handler_dict[surface_name] = self._api.exchange.get_variable_handle(self._state,
-                                                                                                   "SURFACE OUTSIDE FACE TEMPERATURE",
-                                                                                                   surface_name)
+            self._surface_temp_handler_dict[surface_name] = self._api.exchange.get_variable_handle(
+                state,
+                "SURFACE OUTSIDE FACE TEMPERATURE",
+                surface_name)
 
-    def init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self):
+    def init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self,state):
         """
         Initialize the handlers to access the schedule values of the surrounding surface temperatures.
         Should be run at the end of the warmup period.
@@ -201,7 +201,7 @@ class EpSimulationInstance:
         """
         for surface_name in self._outdoor_surface_name_list:
             self._surrounding_surface_temperature_schedule_temperature_handler_dict[
-                surface_name] = self._api.exchange.get_variable_handle(self._state, "Schedule Value",
+                surface_name] = self._api.exchange.get_variable_handle(state, "Schedule Value",
                                                                        self._schedule_name_dict[surface_name])
 
     def get_surface_temperature_of_all_outdoor_surfaces_in_kelvin(self) -> List[float]:
@@ -271,8 +271,6 @@ class EpSimulationInstance:
         to test the synchronization of the shared memory and the barrier.
         :return:
         """
-        #
-
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
 
@@ -311,7 +309,7 @@ class EpSimulationInstance:
     # -----------------------------------------------------#
 
     def run_ep_simulation(self, shared_memory_name, shared_memory_array_size, shared_memory_lock,
-                          synch_point_barrier, path_epw):
+                          synch_point_barrier, path_epw, path_energyplus_dir: str):
         """
         Run the EnergyPlus simulation with the shared memory and the synchronization objects.
         :param shared_memory_name: str, The name of the shared memory to access the surface temperatures
@@ -319,11 +317,16 @@ class EpSimulationInstance:
         :param shared_memory_lock: Lock, The lock to limit writing access to the shared memory
         :param synch_point_barrier: Barrier, The barrier to synchronize processes
         :param path_epw: str, The path to the EPW file
+        :param path_energyplus_dir: str, The path to the EnergyPlus directory
         :return: self: EpSimulationInstance, The instance of the simulation to update the one in the manager
         """
         # Point to the shared memory
         shm = shared_memory.SharedMemory(name=shared_memory_name)
         shared_array = np.ndarray(shared_memory_array_size, dtype=np.float64, buffer=shm.buf)
+
+        # initialize the EnergyPlus API and simulation state
+        self._api = EnergyPlusAPI(running_as_python_plugin=True, path_to_ep_folder=path_energyplus_dir)
+        self._state = self._api.state_manager.new_state()
 
         # request the variables to access schedule and surface temperature values during the simulation
         self.request_variables_before_running_simulation()
