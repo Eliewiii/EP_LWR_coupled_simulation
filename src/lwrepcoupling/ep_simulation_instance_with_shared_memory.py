@@ -10,7 +10,7 @@ from copy import deepcopy
 from multiprocessing import shared_memory
 from typing import List
 
-from src.pyenergyplus.api import EnergyPlusAPI
+from .pyenergyplus.api import EnergyPlusAPI
 from .lwr_idf_additionnal_strings import generate_surface_lwr_idf_additional_string, \
     name_surrounding_surface_temperature_schedule
 
@@ -274,6 +274,11 @@ class EpSimulationInstance:
         # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
         if self._schedule_actuator_handle_dict == {}:
             return
+
+        # Need to make sure all the simulation are at the same time step, as EnergyPlus might adjust the time step if needed.
+        # Need to check the timee step and make the simulation wait if needed with a second shared memory and barrier
+        # Could be overcomed by using a smaller time step, but it needs to be tested
+
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
 

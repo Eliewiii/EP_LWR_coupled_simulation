@@ -7,7 +7,7 @@ import os
 
 from typing import List
 
-from src.pyenergyplus.api import EnergyPlusAPI
+from src.lwrepcoupling.pyenergyplus import EnergyPlusAPI
 
 
 class EPSimulationInstance:

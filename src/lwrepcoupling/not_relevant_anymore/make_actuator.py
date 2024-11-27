@@ -2,7 +2,7 @@
 Functions to create actuator that will update the temperature schedule of context surfaces.
 """
 
-from src.pyenergyplus.api import EnergyPlusAPI
+from src.lwrepcoupling.pyenergyplus import EnergyPlusAPI
 
 
 def make_constant_schedule_actuator(api: EnergyPlusAPI, state, schedule_name: str) -> str:

@@ -4,10 +4,8 @@ Simulation with one building. The surface temperature of one surface is monitore
 
 import os
 
-from random import random
-
 import matplotlib.pyplot as plt
-from src.pyenergyplus.api import EnergyPlusAPI
+from src.lwrepcoupling.pyenergyplus.api import EnergyPlusAPI
 
 path_user = r"C:\Users\elie-medioni"  # Technion
 # path_user = r"C:\Users\eliem"  # Home
