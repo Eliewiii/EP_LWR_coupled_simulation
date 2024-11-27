@@ -135,7 +135,7 @@ class EpLwrSimulationManager:
         """
 
         # To do: Make sure it's the proper size
-        shared_memory_array_size = self.num_outdoor_surfaces * np.float64().itemsize  # 8 bytes per surface
+        shared_memory_array_size = self.num_outdoor_surfaces
 
         # Run the simulation under a Manager context to share memory, locks, and barriers
         with Manager() as manager:
@@ -150,10 +150,10 @@ class EpLwrSimulationManager:
                                              size=shared_memory_array_size * np.float64().itemsize)
 
             # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
+            results_list = []
             try:
                 num_workers = self.num_building  # One process per building, as they should all be run in parallel
                 # Start tasks
-                results_list = []
                 with ProcessPoolExecutor(max_workers=num_workers) as executor:
                     futures = [
                         executor.submit(
@@ -170,18 +170,14 @@ class EpLwrSimulationManager:
                     # Wait for all processes to complete
                     for future in futures:
                         try:
-                            results_list.extend(future.result())
+                            results_list.append(future.result())
                         except Exception as e:
                             print(f"Task generated an exception: {e}")
 
-                # Update the ep_simulation_instance_list with the results
-                for ep_simulation_instance_result in results_list:
-                    building_id = ep_simulation_instance_result.identifier
-                    self._ep_simulation_instance_dict[building_id] = ep_simulation_instance_result
-
-                # plot the temperatures todo: implement for checking
 
             finally:
                 # Cleanup
                 shm.close()
                 shm.unlink()
+
+        return results_list
