@@ -16,9 +16,6 @@ random Python virtual environment. To bypass this issue the source code of pytho
 directly in this package and slightly modified to point to the EnergyPlus executable. This is not a clean way
 and will need to be addressed in the future.
 
-Note th
-
-
 # Pre-requisites
 EnergyPlus(TM) needs to be installed on your computer. You can install it from the official website:
 https://energyplus.net/downloads
