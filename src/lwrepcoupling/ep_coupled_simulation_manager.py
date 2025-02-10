@@ -36,6 +36,7 @@ class EpLwrSimulationManager:
         self._path_epw = None
         self._path_energyplus_dir = None
         self._set_paths_attributes(path_output_dir, path_epw, path_energyplus_dir)
+        self._x_epsilon_matrix = None
 
     def _set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
         """
@@ -126,6 +127,11 @@ class EpLwrSimulationManager:
         # Add the building to the simulation manager
         self._building_id_list.append(building_id)
         self._ep_simulation_instance_dict[building_id] = ep_simulation_instance
+
+
+    def add_vf_x_matrix(self, f_star_matrix, f_star_epsilon_matrix, epsilon_vertex):
+        """
+        """
 
 
     def run_lwr_coupled_simulation(self):
