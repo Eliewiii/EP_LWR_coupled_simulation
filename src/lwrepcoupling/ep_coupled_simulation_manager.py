@@ -129,9 +129,29 @@ class EpLwrSimulationManager:
         self._ep_simulation_instance_dict[building_id] = ep_simulation_instance
 
 
-    def add_vf_x_matrix(self, f_star_matrix, f_star_epsilon_matrix, epsilon_vertex):
+    def add_y_matrix(self, f_star_matrix, f_star_epsilon_matrix, epsilon_matrix):
         """
         """
+        # Check if the matrices are of the same size
+        if f_star_matrix.shape != f_star_epsilon_matrix.shape or f_star_matrix.shape != epsilon_matrix.shape:
+            raise ValueError("The matrices must be of the same size.")
+        # Check if the matrices are square
+        if f_star_matrix.shape[0] != f_star_matrix.shape[1]:
+            raise ValueError("The matrices must be square.")
+        # Check if the size of the matrix fits the number of outdoor surfaces
+        if f_star_matrix.shape[0] != self.num_outdoor_surfaces:
+            raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
+
+        # Make intermediate matrices
+        vf_tot_list = [1-sum(f_star_matrix[i, :]) for i in range(f_star_matrix.shape[0])]
+        f_vf_tot_epsilon_matrix_inv = np.zeros((f_star_matrix.shape[0], f_star_matrix.shape[0]))
+        for i in range(f_star_matrix.shape[0]):
+            try:
+                f_vf_tot_epsilon_matrix_inv[i, i] =  1/(vf_tot_list[i] * epsilon_matrix[i][i])
+            except ZeroDivisionError:
+                f_vf_tot_epsilon_matrix_inv[i, i] = 0
+                """ Set to zero if the denominator is zero, in the equation it is equivalen to say the surface 
+                is not receiving  any LWR from the other surfaces"""
 
 
     def run_lwr_coupled_simulation(self):
