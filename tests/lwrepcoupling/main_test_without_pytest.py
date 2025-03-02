@@ -5,7 +5,7 @@ detect potential errors and problems, for development purposes only
 import os
 
 from src.lwrepcoupling import EpLwrSimulationManager
-
+from src.lwrepcoupling.ep_simulation_instance_with_shared_memory import EpSimulationInstance
 # Path to input data
 test_data_dir = os.path.join(os.path.dirname(os.getcwd()), "data")
 # Inputs
@@ -35,11 +35,13 @@ def main():
                                                outdoor_surface_surrounding_surface_vf_dict,
                                                outdoor_surface_sky_vf_dict,
                                                outdoor_surface_ground_vf_dict)
+        path_pkl = ep_lwr_simulation_manager._ep_simulation_instance_dict[building_id].to_pkl(path_folder=path_output_dir)
+        ep_sim_obj = EpSimulationInstance.from_pkl(path_pkl)
     # Run the simulation
-    return ep_lwr_simulation_manager.run_lwr_coupled_simulation()
+    # return ep_lwr_simulation_manager.run_lwr_coupled_simulation()
 
 
 if __name__ == "__main__":
-    result=main()
+    result = main()
 
     print("done")

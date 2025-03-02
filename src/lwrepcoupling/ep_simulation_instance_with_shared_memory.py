@@ -3,9 +3,13 @@ Class to represent an instance of a simulation of the EP model, generating the i
 managing the handlers etc.
 """
 
-import numpy as np
 import os
 import shutil
+import pickle
+
+import numpy as np
+
+
 from copy import deepcopy
 from multiprocessing import shared_memory
 from typing import List
@@ -69,6 +73,39 @@ class EpSimulationInstance:
     @property
     def num_outdoor_surfaces(self):
         return len(self._outdoor_surface_name_list)
+
+    # -----------------------------------------------------#
+    # -------------- Export and Import --------------------#
+    # -----------------------------------------------------#
+
+    def to_pkl(self, path_folder: str, file_name: str = None,
+               get_path_only: bool = False) -> str:
+        """
+        Save the instance to a pickle file.
+        :param path_folder: str, the folder path where the pickle file will be saved.
+        :param file_name: str, the name of the pickle file.
+        :param get_path_only: bool, if True, return the path of the pickle file only, if False, save the instance to the
+        pickle file and return the path.
+        """
+        if file_name is None:
+            file_name=f"ep_sim_instance_{self._identifier}.pkl"
+        path_pkl_file = os.path.join(path_folder, file_name)
+        if not get_path_only:
+            with open(path_pkl_file, 'wb') as f:
+                pickle.dump(self, f)
+        return path_pkl_file
+
+    @staticmethod
+    def from_pkl(path_pkl_file) -> "EpSimulationInstance":
+        """
+        Load a RadiativeSurfaceManager object from a pickle file.
+        :param path_pkl_file: str, the path of the pickle file.
+        :return: RadiativeSurfaceManager, the RadiativeSurfaceManager object.
+        """
+        with open(path_pkl_file, 'rb') as f:
+            ep_simulation_instance = pickle.load(f)
+        return ep_simulation_instance
+
 
     # -----------------------------------------------------#
     # ------------------ Init Method ----------------------#

@@ -1,26 +1,35 @@
 """
 Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus among multiple buildings.
 """
+import json
 import os
-
 import shutil
 
-import numpy as np
+from scipy.sparse import csr_matrix
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import shared_memory, Manager
-
 from typing import List
 
+import numpy as np
+
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
+from .utils_matrices import check_matrices,compute_total_vf
 
 
 class EpLwrSimulationManager:
+    # Constants
+    CONFIG_BUILDING_ID_LIST = "building_id_list"
+    CONFIG_BUILDING_ID = "building_id"
+    CONFIG_PATH_IDF = "path_idf"
+    CONFIG_LIST_OUTDOOR_SURFACE_NAME = "list_outdoor_surface_name"
+    CONFIG_NUM_OUTDOOR_SURFACES = "num_outdoor_surfaces"
+    CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING = "num_outdoor_surfaces_per_building"
 
     # -----------------------------------------------------#
     # -------------------- Initialization------------------#
     # -----------------------------------------------------#
 
-    def __init__(self, path_output_dir:str, path_epw:str, path_energyplus_dir:str):
+    def __init__(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
         """
         Initialize the EnergyPlus simulation manager for the coupled long-wave radiation (LWR) simulation.
         :param path_output_dir: Path to the output directory, where the simulation will be run. It can be either
@@ -80,8 +89,90 @@ class EpLwrSimulationManager:
                     self._ep_simulation_instance_dict.values()])
 
     # -----------------------------------------------------#
+    # --------------------- Config file -------------------#
+    # -----------------------------------------------------#
+    def make_config_file(self, path_dir_config: str, list_building_id: List[str],
+                         list_path_idf_file: List[str],
+                         list_of_list_outdoor_surface_name: List[List[str]]):
+        """
+        Make a config file for the LWR-EP coupling simulation manager
+        :param path_dir_config: str, the path to the directory of the config file
+        :param list_path_idf_file: [str], the list of path to the idf files
+        :param list_building_id: [str], the list of building IDs
+        :param list_of_list_outdoor_surface_name: [[str]], the list of list of outdoor surface names
+        """
+        # Check if the directory exists
+        if not os.path.exists(path_dir_config):
+            raise FileNotFoundError(f"The directory {path_dir_config} does not exist")
+        # Check if idf files exist
+        for path_idf in list_path_idf_file:
+            if not os.path.exists(path_idf):
+                raise FileNotFoundError(f"The idf file {path_idf} does not exist")
+        # Create the config file
+        config_dict = {
+            building_id: {
+                self.CONFIG_BUILDING_ID: building_id,
+                self.CONFIG_PATH_IDF: path_idf,
+                self.CONFIG_LIST_OUTDOOR_SURFACE_NAME: list_outdoor_surface_name,
+                self.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING: len(list_outdoor_surface_name)
+            }
+            for building_id, path_idf, list_outdoor_surface_name in
+            zip(list_building_id, list_path_idf_file, list_of_list_outdoor_surface_name)
+        }
+
+        config_dict[self.CONFIG_BUILDING_ID_LIST] = list_building_id
+        config_dict[self.CONFIG_NUM_OUTDOOR_SURFACES] = sum(
+            [len(list_outdoor_surface_name) for list_outdoor_surface_name in
+             list_of_list_outdoor_surface_name])
+
+        path_config_file = os.path.join(path_dir_config, "ep_lwr_sim_man_config.json")
+        with open(path_config_file, 'w') as f:
+            json.dump(config_dict, f)
+
+        return path_config_file
+
+    @staticmethod
+    def load_config_file(path_config_file: str):
+        """
+
+        :param path_config_file:
+        :return:
+        """
+        # Check if the file exists
+        if not os.path.exists(path_config_file):
+            raise FileNotFoundError(f"The config file {path_config_file} does not exist")
+        # Load the config file
+        with open(path_config_file, 'r') as f:
+            config_dict = json.load(f)
+
+        return config_dict
+
+    # -----------------------------------------------------#
     # --------------------- Methods -----------------------#
     # -----------------------------------------------------#
+
+    def set_up_lwr_coupled_simulation(self, path_config_file: str, vf_matrix: csr_matrix,
+                                      eps_matrix: csr_matrix, rho_matrix: csr_matrix, tau_matrix: csr_matrix):
+        """
+        Set up the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings.
+        """
+        #### Config file
+        config_dict = self.load_config_file()
+
+        #### Check if the size of the matrices fits the number of outdoor surfaces
+        check_matrices(vf_matrix, eps_matrix, rho_matrix, tau_matrix)
+        if vf_matrix.shape[0] != self.num_outdoor_surfaces:
+            raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
+
+        #### Process the matrices
+
+        # get sum of view factors for each surface
+        vf_tot_list = compute_total_vf(vf_matrix)
+
+
+        # get final matrix
+
+        ### Initialize buildings
 
     def add_building(self, building_id: str, path_idf: str, outdoor_surface_name_list: List[str],
                      outdoor_surface_surrounding_surface_vf_dict: dict, outdoor_surface_sky_vf_dict: dict,
@@ -126,8 +217,10 @@ class EpLwrSimulationManager:
         ep_simulation_instance.set_vf_matrices(vf_matrix, vf_eps_matrix)
         # Add the building to the simulation manager
         self._building_id_list.append(building_id)
-        self._ep_simulation_instance_dict[building_id] = ep_simulation_instance
-
+        # Todo: save tp pkl instead
+        path_pkl_file = ep_simulation_instance.to_pkl(
+            path_folder=self._path_output_dir)  # change path to output
+        self._ep_simulation_instance_dict[building_id] = path_pkl_file
 
     def add_y_matrix(self, f_star_matrix, f_star_epsilon_matrix, epsilon_matrix):
         """
@@ -143,16 +236,15 @@ class EpLwrSimulationManager:
             raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
 
         # Make intermediate matrices
-        vf_tot_list = [1-sum(f_star_matrix[i, :]) for i in range(f_star_matrix.shape[0])]
+        vf_tot_list = [1 - sum(f_star_matrix[i, :]) for i in range(f_star_matrix.shape[0])]
         f_vf_tot_epsilon_matrix_inv = np.zeros((f_star_matrix.shape[0], f_star_matrix.shape[0]))
         for i in range(f_star_matrix.shape[0]):
             try:
-                f_vf_tot_epsilon_matrix_inv[i, i] =  1/(vf_tot_list[i] * epsilon_matrix[i][i])
+                f_vf_tot_epsilon_matrix_inv[i, i] = 1 / (vf_tot_list[i] * epsilon_matrix[i][i])
             except ZeroDivisionError:
                 f_vf_tot_epsilon_matrix_inv[i, i] = 0
                 """ Set to zero if the denominator is zero, in the equation it is equivalen to say the surface 
                 is not receiving  any LWR from the other surfaces"""
-
 
     def run_lwr_coupled_simulation(self):
         """
