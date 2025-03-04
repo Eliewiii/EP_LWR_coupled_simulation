@@ -36,6 +36,18 @@ def compute_total_vf(vf_matrix: sp.csr_matrix) -> List[float]:
     return vf_tot_list
 
 
+def compute_f_star_rho(vf_matrix: sp.csr_matrix,
+                       rho_matrix: sp.csr_matrix):
+    # Size of the matrix
+    n = vf_matrix.shape[0]
+    # Identity matrix
+    id_mtx = sp.eye(n, format='csr')
+    # F^{*rho} matrix to inverse
+    f_star_rho = id_mtx - rho_matrix.dot(vf_matrix)
+
+    return f_star_rho
+
+
 def compute_resolution_matrix(vf_matrix: sp.csr_matrix,
                               eps_matrix: sp.csr_matrix, rho_matrix: sp.csr_matrix,
                               tau_matrix: sp.csr_matrix):
@@ -52,32 +64,4 @@ def compute_resolution_matrix(vf_matrix: sp.csr_matrix,
     # Identity matrix
     id_mtx = sp.eye(n, format='csr')
     # F^{*rho} matrix to inverse
-    f_star_rho = id_mtx - rho_matrix.dot(vf_matrix)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    f_star_rho = compute_f_star_rho(vf_matrix=vf_matrix, rho_matrix=rho_matrix)

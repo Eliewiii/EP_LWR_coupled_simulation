@@ -13,7 +13,7 @@ from typing import List
 import numpy as np
 
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
-from .utils_matrices import check_matrices,compute_total_vf
+from lwrepcoupling.utils.utils_resolution_matrices import check_matrices,compute_total_vf
 
 
 class EpLwrSimulationManager:
