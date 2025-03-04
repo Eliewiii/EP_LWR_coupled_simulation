@@ -5,7 +5,7 @@
 import os
 import time
 
-from lwrepcoupling.utils import read_csr_matrices_from_npz, compute_full_inverse_via_gmres
+from lwrepcoupling.utils import read_csr_matrices_from_npz, compute_full_inverse_via_gmres,compute_full_inverse_via_gmres_parallel
 from lwrepcoupling.utils.utils_resolution_matrices import compute_f_star_rho
 
 # Get file location
@@ -26,7 +26,7 @@ def inverse():
                                     rho_matrix=mtx_dict[name_file_rho_matrix])
 
     dur=time.time()
-    compute_full_inverse_via_gmres(mtx=f_star_rho,rtol=1e-6)
+    compute_full_inverse_via_gmres_parallel(mtx=f_star_rho,rtol=1e-6)
     print(f"duration: {time.time()-dur}")
 
 
