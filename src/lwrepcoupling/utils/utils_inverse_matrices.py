@@ -72,8 +72,7 @@ def compute_full_inverse_via_gmres(mtx, tol=1e-5, maxiter=100, rtol=1e-5, precon
     return inverse_approx, error_norm
 
 
-
-def solve_for_column_wrapper(args):
+def solve_gmres_for_one_column(args):
     """Wrapper function for solving a single column of the inverse matrix."""
     mtx, i, M_inv, maxiter, rtol = args
     n = mtx.shape[0]
@@ -87,8 +86,8 @@ def solve_for_column_wrapper(args):
     return i, x  # Return column index and result to maintain order
 
 
-def compute_full_inverse_via_gmres_parallel(mtx, tol=1e-5, maxiter=100, rtol=1e-5, precondition=False,
-                                            num_workers=None):
+def compute_full_inverse_via_gmres_parallel(mtx, tol: float = 1e-5, maxiter: int = 150, rtol: float = 5e-7,
+                                            precondition: bool = False, num_workers: int = 0):
     """
     Approximates the inverse of a sparse matrix mtx using GMRES in parallel for all columns.
 
@@ -115,7 +114,7 @@ def compute_full_inverse_via_gmres_parallel(mtx, tol=1e-5, maxiter=100, rtol=1e-
     # Use ProcessPoolExecutor for parallel execution
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         results = list(
-            executor.map(solve_for_column_wrapper, [(mtx, i, M_inv, maxiter, rtol) for i in range(n)]))
+            executor.map(solve_gmres_for_one_column, [(mtx, i, M_inv, maxiter, rtol) for i in range(n)]))
 
     # Ensure results are sorted in column order (executor.map() preserves order, but just to be safe)
     results.sort(key=lambda x: x[0])
@@ -129,11 +128,11 @@ def compute_full_inverse_via_gmres_parallel(mtx, tol=1e-5, maxiter=100, rtol=1e-
     error_matrix = identity_approx - csr_matrix(np.eye(n))
     error_norm = np.linalg.norm(error_matrix.toarray(), 'fro')
 
+    # todo: maybe stops the resolution if accuracy requirements not met
+
     if error_norm < tol:
-        print(f"✅ Accuracy check passed: Error norm {error_norm:.2e} is below tolerance.")
+        print(f"Accuracy check passed: Error norm {error_norm:.2e} is below tolerance.")
     else:
-        print(f"⚠️ Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
+        print(f"Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
 
     return inverse_approx, error_norm
-
-

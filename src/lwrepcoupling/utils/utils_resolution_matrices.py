@@ -6,6 +6,8 @@ from typing import List
 
 import scipy.sparse as sp
 
+from .utils_inverse_matrices import compute_full_inverse_via_gmres_parallel
+
 
 def check_matrices(*matrix):
     """
@@ -50,7 +52,7 @@ def compute_f_star_rho(vf_matrix: sp.csr_matrix,
 
 def compute_resolution_matrix(vf_matrix: sp.csr_matrix,
                               eps_matrix: sp.csr_matrix, rho_matrix: sp.csr_matrix,
-                              tau_matrix: sp.csr_matrix):
+                              tau_matrix: sp.csr_matrix, **kwargs) -> (sp.csr_matrix, List):
     """
 
     :param vf_matrix:
@@ -65,3 +67,46 @@ def compute_resolution_matrix(vf_matrix: sp.csr_matrix,
     id_mtx = sp.eye(n, format='csr')
     # F^{*rho} matrix to inverse
     f_star_rho = compute_f_star_rho(vf_matrix=vf_matrix, rho_matrix=rho_matrix)
+    inv_f_star_rho, = compute_full_inverse_via_gmres_parallel(mtx=f_star_rho, **kwargs)
+
+    # Get total VF from surrounding surfaces
+    total_srd_vf_list = compute_total_vf(vf_matrix=vf_matrix)
+    # Get (F^{srd,\epsilon})^{-1}
+    diag_f_srd_epsilon_inv = [
+        1 / (total_srd_vf_list[i] * eps_matrix[i, i]) if total_srd_vf_list[i] * eps_matrix[i, i] != 0 else 0
+        for i in range(n)]
+
+    inv_f_srd_epsilon = sp.diags(diag_f_srd_epsilon_inv, offsets=0, format="csr")
+
+    resolution_mtx = inv_f_srd_epsilon@ (id_mtx - vf_matrix + tau_matrix @ vf_matrix) @ inv_f_star_rho @ eps_matrix
+
+    # Check the result is csr
+    if not sp.issparse(resolution_mtx):
+        resolution_mtx = sp.csr_matrix(resolution_mtx)
+
+    return resolution_mtx, total_srd_vf_list
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
