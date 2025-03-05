@@ -7,7 +7,7 @@ import os
 from scipy.sparse import csr_matrix, save_npz, load_npz, issparse
 
 
-def read_csr_matrices_from_npz(path_dir, *matrix_file_names):
+def read_csr_matrices_from_npz(*path_csr_matrix_npz_files):
     """
     Read multiple sparse matrices from a single .npz file.
     :param path_file:
@@ -15,13 +15,13 @@ def read_csr_matrices_from_npz(path_dir, *matrix_file_names):
     :return:
     """
     # Check if the files exist
-    for name in matrix_file_names:
-        if not os.path.isfile(os.path.join(path_dir, name + ".npz")):
-            raise FileNotFoundError(f"The matrix file {os.path.join(path_dir, name + '.npz')} does not exist")
+    for pah_file in path_csr_matrix_npz_files:
+        if not os.path.isfile(pah_file):
+            raise FileNotFoundError(f"The matrix file {pah_file} does not exist")
     #Load the matrices
-    matrix_dict = {}
+    mtx_list = []
 
-    for name in matrix_file_names:
-        matrix_dict[name] = load_npz(os.path.join(path_dir, name + ".npz"))
+    for path_file in path_csr_matrix_npz_files:
+        mtx_list.append(load_npz(path_file))
 
-    return matrix_dict
+    return mtx_list

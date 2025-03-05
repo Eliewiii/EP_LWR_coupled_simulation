@@ -319,7 +319,7 @@ class EpSimulationInstance:
         :return:
         """
         # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
-        if self._schedule_actuator_handle_list == []:
+        if not self._schedule_actuator_handle_list:
             return
 
         # todo Need to make sure all the simulation are at the same time step, as EnergyPlus might adjust the time step if needed.
@@ -345,17 +345,17 @@ class EpSimulationInstance:
         for i, srd_mrt in enumerate(list_srd_mean_radiant_temperature_in_c):
             self._api.exchange.set_actuator_value(state,
                                                   self._schedule_actuator_handle_list[i], srd_mrt)
-            # get the current value of the schedule
-            current_value = self._api.exchange.get_variable_value(state,
-                                                                  self._surrounding_surface_temperature_schedule_temperature_handler_list[
-                                                                      i])
-            # assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
+            # # get the current value of the schedule
+            # current_value = self._api.exchange.get_variable_value(state,
+            #                                                       self._surrounding_surface_temperature_schedule_temperature_handler_list[
+            #                                                           i])
+            # # assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
 
-        # -- For testing --#
-        # Get current simulation time (in hours)
-        self._test_current_time_list.append(self._api.exchange.current_sim_time(state))
-        self._test_temperature_list.append(deepcopy(np.array(surface_temperatures_list) - 273.15))
-        self._test_surrounding_surface_temperature_list.append(mean_surface_temperature)
+        # # -- For testing --#
+        # # Get current simulation time (in hours)
+        # self._test_current_time_list.append(self._api.exchange.current_sim_time(state))
+        # self._test_temperature_list.append(deepcopy(np.array(surface_temperatures_list) - 273.15))
+        # self._test_surrounding_surface_temperature_list.append(mean_surface_temperature)
         # -----------------#
 
     def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock,
@@ -443,8 +443,6 @@ class EpSimulationInstance:
         # Point to the shared memory
         shm = shared_memory.SharedMemory(name=shared_memory_name)
         shared_array = np.ndarray(shared_memory_array_size, dtype=np.float64, buffer=shm.buf)
-
-        # Read the matrix file
 
         # initialize the EnergyPlus API and simulation state
         self._api = EnergyPlusAPI(running_as_python_plugin=True, path_to_ep_folder=path_energyplus_dir)

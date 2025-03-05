@@ -4,6 +4,7 @@ Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus 
 import json
 import os
 import shutil
+import logging
 
 from scipy.sparse import csr_matrix
 from concurrent.futures import ProcessPoolExecutor
@@ -13,7 +14,7 @@ from typing import List
 import numpy as np
 
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
-from lwrepcoupling.utils.utils_resolution_matrices import check_matrices,compute_total_vf
+from .utils import read_csr_matrices_from_npz, compute_resolution_matrix, check_matrices
 
 
 class EpLwrSimulationManager:
@@ -24,6 +25,17 @@ class EpLwrSimulationManager:
     CONFIG_LIST_OUTDOOR_SURFACE_NAME = "list_outdoor_surface_name"
     CONFIG_NUM_OUTDOOR_SURFACES = "num_outdoor_surfaces"
     CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING = "num_outdoor_surfaces_per_building"
+    CONFIG_KEY_PATH_VF_MTX = "vf_mtx"
+    CONFIG_KEY_PATH_EPS_MTX = "eps_mtx"
+    CONFIG_KEY_PATH_RHO_MTX = "rho_mtx"
+    CONFIG_KEY_PATH_TAU_MTX = "tau_mtx"
+    CONFIG_KEY_PATH_OUT_DIR = "path_output"
+    CONFIG_KEY_PATH_EP = "path_folder_EnergyPlus"
+    CONFIG_KEY_PATH_EPW = "path_epw"
+
+    EP_SIM_PARA_DICT_UNIT_DEFAULT = {
+        "path_idf": None
+    }
 
     # -----------------------------------------------------#
     # -------------------- Initialization------------------#
@@ -39,13 +51,12 @@ class EpLwrSimulationManager:
         """
         # Simulation
         self._building_id_list = []
-        self._ep_simulation_instance_dict = {}
+        self._ep_simulation_parameter_dict = {}
         # Paths to the output directory, EPW file, and EnergyPlus directory
         self._path_output_dir = None
         self._path_epw = None
         self._path_energyplus_dir = None
         self._set_paths_attributes(path_output_dir, path_epw, path_energyplus_dir)
-        self._x_epsilon_matrix = None
 
     def _set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
         """
@@ -91,15 +102,29 @@ class EpLwrSimulationManager:
     # -----------------------------------------------------#
     # --------------------- Config file -------------------#
     # -----------------------------------------------------#
-    def make_config_file(self, path_dir_config: str, list_building_id: List[str],
+    def make_config_file(self, path_dir_config: str, path_dir_outputs: str,
+                         path_epw_file: str,
+                         path_energyplus_dir: str,
+                         list_building_id: List[str],
                          list_path_idf_file: List[str],
-                         list_of_list_outdoor_surface_name: List[List[str]]):
+                         list_of_list_outdoor_surface_name: List[List[str]],
+                         path_vf_mtx_crs_npz: str,
+                         path_eps_mtx_crs_npz: str,
+                         path_rho_mtx_crs_npz: str,
+                         path_tau_mtx_crs_npz: str):
         """
         Make a config file for the LWR-EP coupling simulation manager
         :param path_dir_config: str, the path to the directory of the config file
+        :param path_dir_outputs: str, path to the dir where the lwr simulation will run and the output will be written
+        :param path_epw_file: path to the EPW file for the EnergyPlus simulation
+        :param path_energyplus_dir: path to the directory containing EnergyPlus
         :param list_path_idf_file: [str], the list of path to the idf files
         :param list_building_id: [str], the list of building IDs
         :param list_of_list_outdoor_surface_name: [[str]], the list of list of outdoor surface names
+        :param path_vf_mtx_crs_npz :
+        :param path_eps_mtx_crs_npz :
+        :param path_rho_mtx_crs_npz :
+        :param path_tau_mtx_crs_npz :
         """
         # Check if the directory exists
         if not os.path.exists(path_dir_config):
@@ -124,6 +149,11 @@ class EpLwrSimulationManager:
         config_dict[self.CONFIG_NUM_OUTDOOR_SURFACES] = sum(
             [len(list_outdoor_surface_name) for list_outdoor_surface_name in
              list_of_list_outdoor_surface_name])
+        config_dict[self.CONFIG_KEY_PATH_OUT_DIR] = path_dir_outputs
+        config_dict[self.CONFIG_KEY_PATH_VF_MTX] = path_vf_mtx_crs_npz
+        config_dict[self.CONFIG_KEY_PATH_EPS_MTX] = path_eps_mtx_crs_npz
+        config_dict[self.CONFIG_KEY_PATH_RHO_MTX] = path_rho_mtx_crs_npz
+        config_dict[self.CONFIG_KEY_PATH_TAU_MTX] = path_tau_mtx_crs_npz
 
         path_config_file = os.path.join(path_dir_config, "ep_lwr_sim_man_config.json")
         with open(path_config_file, 'w') as f:
@@ -147,6 +177,31 @@ class EpLwrSimulationManager:
 
         return config_dict
 
+    @classmethod
+    def set_up_coupled_lwr_simulation_from_config_file(cls, path_config_file):
+        """
+
+        :param path_config_file:
+        :return:
+        """
+        config_dict = cls.load_config_file(path_config_file=path_config_file)
+
+        sim_manager = cls(path_output_dir=cls.CONFIG_KEY_PATH_OUT_DIR, path_epw=cls.CONFIG_KEY_PATH_EPW,
+                          path_energyplus_dir=cls.CONFIG_KEY_PATH_EP)
+        # Load and check matrices
+        vf_mtx, eps_mtx, rho_mtx, tau_mtx = read_csr_matrices_from_npz(
+            config_dict[cls.CONFIG_KEY_PATH_VF_MTX],
+            config_dict[cls.CONFIG_KEY_PATH_EPS_MTX],
+            config_dict[cls.CONFIG_KEY_PATH_RHO_MTX],
+            config_dict[cls.CONFIG_KEY_PATH_TAU_MTX],
+        )
+        check_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
+        # Ensure the number of surface is consistent accross
+        if vf_mtx.shape[0] != config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]:
+            raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
+
+
+
     # -----------------------------------------------------#
     # --------------------- Methods -----------------------#
     # -----------------------------------------------------#
@@ -169,10 +224,11 @@ class EpLwrSimulationManager:
         # get sum of view factors for each surface
         vf_tot_list = compute_total_vf(vf_matrix)
 
-
         # get final matrix
 
         ### Initialize buildings
+        # Make one folder per building
+        for bu
 
     def add_building(self, building_id: str, path_idf: str, outdoor_surface_name_list: List[str],
                      outdoor_surface_surrounding_surface_vf_dict: dict, outdoor_surface_sky_vf_dict: dict,
