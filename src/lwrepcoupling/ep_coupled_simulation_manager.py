@@ -102,76 +102,87 @@ class EpLwrSimulationManager:
     # -----------------------------------------------------#
     # --------------------- Config file -------------------#
     # -----------------------------------------------------#
-    def make_config_file(self, path_dir_config: str, path_dir_outputs: str,
-                         path_epw_file: str,
-                         path_energyplus_dir: str,
-                         list_building_id: List[str],
-                         list_path_idf_file: List[str],
+    @classmethod
+    def make_config_file(cls, path_dir_config: str, path_dir_outputs: str,
+                         path_epw_file: str, path_energyplus_dir: str,
+                         list_building_id: List[str], list_path_idf_file: List[str],
                          list_of_list_outdoor_surface_name: List[List[str]],
-                         path_vf_mtx_crs_npz: str,
-                         path_eps_mtx_crs_npz: str,
-                         path_rho_mtx_crs_npz: str,
-                         path_tau_mtx_crs_npz: str):
+                         path_vf_mtx_crs_npz: str, path_eps_mtx_crs_npz: str,
+                         path_rho_mtx_crs_npz: str, path_tau_mtx_crs_npz: str) -> str:
         """
-        Make a config file for the LWR-EP coupling simulation manager
-        :param path_dir_config: str, the path to the directory of the config file
-        :param path_dir_outputs: str, path to the dir where the lwr simulation will run and the output will be written
-        :param path_epw_file: path to the EPW file for the EnergyPlus simulation
-        :param path_energyplus_dir: path to the directory containing EnergyPlus
-        :param list_path_idf_file: [str], the list of path to the idf files
-        :param list_building_id: [str], the list of building IDs
-        :param list_of_list_outdoor_surface_name: [[str]], the list of list of outdoor surface names
-        :param path_vf_mtx_crs_npz :
-        :param path_eps_mtx_crs_npz :
-        :param path_rho_mtx_crs_npz :
-        :param path_tau_mtx_crs_npz :
+        Creates a configuration file for the LWR-EP coupled simulation manager.
+
+        :param path_dir_config: Path to the directory where the config file will be saved.
+        :param path_dir_outputs: Path to the directory where the simulation outputs will be stored.
+        :param path_epw_file: Path to the EPW weather file required for the EnergyPlus simulation.
+        :param path_energyplus_dir: Path to the directory containing EnergyPlus.
+        :param list_building_id: List of building IDs.
+        :param list_path_idf_file: List of paths to the IDF (EnergyPlus) files.
+        :param list_of_list_outdoor_surface_name: List of lists containing outdoor surface names per building.
+        :param path_vf_mtx_crs_npz: Path to the view factor matrix in compressed sparse format.
+        :param path_eps_mtx_crs_npz: Path to the emissivity matrix in compressed sparse format.
+        :param path_rho_mtx_crs_npz: Path to the reflectivity matrix in compressed sparse format.
+        :param path_tau_mtx_crs_npz: Path to the transmissivity matrix in compressed sparse format.
+        :return: Path to the generated configuration file.
+        :raises FileNotFoundError: If required directories or files do not exist.
         """
-        # Check if the directory exists
+
+        # Ensure the configuration directory exists
         if not os.path.exists(path_dir_config):
-            raise FileNotFoundError(f"The directory {path_dir_config} does not exist")
-        # Check if idf files exist
+            raise FileNotFoundError(f"The configuration directory '{path_dir_config}' does not exist.")
+
+        # Validate that all IDF files exist
         for path_idf in list_path_idf_file:
             if not os.path.exists(path_idf):
-                raise FileNotFoundError(f"The idf file {path_idf} does not exist")
-        # Create the config file
+                raise FileNotFoundError(f"The IDF file '{path_idf}' does not exist.")
+
+        # Construct the configuration dictionary
         config_dict = {
             building_id: {
-                self.CONFIG_BUILDING_ID: building_id,
-                self.CONFIG_PATH_IDF: path_idf,
-                self.CONFIG_LIST_OUTDOOR_SURFACE_NAME: list_outdoor_surface_name,
-                self.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING: len(list_outdoor_surface_name)
+                cls.CONFIG_BUILDING_ID: building_id,
+                cls.CONFIG_PATH_IDF: path_idf,
+                cls.CONFIG_LIST_OUTDOOR_SURFACE_NAME: list_outdoor_surface_name,
+                cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING: len(list_outdoor_surface_name),
             }
             for building_id, path_idf, list_outdoor_surface_name in
             zip(list_building_id, list_path_idf_file, list_of_list_outdoor_surface_name)
         }
 
-        config_dict[self.CONFIG_BUILDING_ID_LIST] = list_building_id
-        config_dict[self.CONFIG_NUM_OUTDOOR_SURFACES] = sum(
-            [len(list_outdoor_surface_name) for list_outdoor_surface_name in
-             list_of_list_outdoor_surface_name])
-        config_dict[self.CONFIG_KEY_PATH_OUT_DIR] = path_dir_outputs
-        config_dict[self.CONFIG_KEY_PATH_VF_MTX] = path_vf_mtx_crs_npz
-        config_dict[self.CONFIG_KEY_PATH_EPS_MTX] = path_eps_mtx_crs_npz
-        config_dict[self.CONFIG_KEY_PATH_RHO_MTX] = path_rho_mtx_crs_npz
-        config_dict[self.CONFIG_KEY_PATH_TAU_MTX] = path_tau_mtx_crs_npz
+        # Add global configuration settings
+        config_dict[cls.CONFIG_BUILDING_ID_LIST] = list_building_id
+        config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES] = sum(
+            len(lst) for lst in list_of_list_outdoor_surface_name)
+        config_dict[cls.CONFIG_KEY_PATH_OUT_DIR] = path_dir_outputs
+        config_dict[cls.CONFIG_KEY_PATH_VF_MTX] = path_vf_mtx_crs_npz
+        config_dict[cls.CONFIG_KEY_PATH_EPS_MTX] = path_eps_mtx_crs_npz
+        config_dict[cls.CONFIG_KEY_PATH_RHO_MTX] = path_rho_mtx_crs_npz
+        config_dict[cls.CONFIG_KEY_PATH_TAU_MTX] = path_tau_mtx_crs_npz
+        config_dict[cls.CONFIG_KEY_PATH_EP] = path_energyplus_dir  # Added EnergyPlus directory
+        config_dict[cls.CONFIG_KEY_PATH_EPW] = path_epw_file  # Added EPW file path
 
+        # Define the path to the output configuration file
         path_config_file = os.path.join(path_dir_config, "ep_lwr_sim_man_config.json")
+
+        # Save the configuration dictionary as a JSON file
         with open(path_config_file, 'w') as f:
-            json.dump(config_dict, f)
+            json.dump(config_dict, f, indent=4)
 
         return path_config_file
 
     @staticmethod
-    def load_config_file(path_config_file: str):
+    def load_config_file(path_config_file: str) -> dict:
         """
+        Loads a configuration file in JSON format.
 
-        :param path_config_file:
-        :return:
+        :param path_config_file: The path to the configuration file.
+        :return: A dictionary containing the configuration data.
+        :raises FileNotFoundError: If the file does not exist.
         """
         # Check if the file exists
         if not os.path.exists(path_config_file):
             raise FileNotFoundError(f"The config file {path_config_file} does not exist")
-        # Load the config file
+
+        # Load the config file as a dictionary
         with open(path_config_file, 'r') as f:
             config_dict = json.load(f)
 
@@ -199,6 +210,7 @@ class EpLwrSimulationManager:
         # Ensure the number of surface is consistent accross
         if vf_mtx.shape[0] != config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]:
             raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
+        #
 
 
 
