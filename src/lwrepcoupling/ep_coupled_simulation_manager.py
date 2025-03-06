@@ -14,21 +14,26 @@ from typing import List
 import numpy as np
 
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
-from .utils import read_csr_matrices_from_npz, compute_resolution_matrix, check_matrices
+from .utils import read_csr_matrices_from_npz, compute_resolution_matrices, check_matrices,check_inversion_parameters
 
 
 class EpLwrSimulationManager:
     # Constants
+    CONFIG_FILE_NAME = "ep_lwr_sim_man_config.json"
     CONFIG_BUILDING_ID_LIST = "building_id_list"
     CONFIG_BUILDING_ID = "building_id"
     CONFIG_PATH_IDF = "path_idf"
     CONFIG_LIST_OUTDOOR_SURFACE_NAME = "list_outdoor_surface_name"
     CONFIG_NUM_OUTDOOR_SURFACES = "num_outdoor_surfaces"
     CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING = "num_outdoor_surfaces_per_building"
+    # Config matrices
     CONFIG_KEY_PATH_VF_MTX = "vf_mtx"
     CONFIG_KEY_PATH_EPS_MTX = "eps_mtx"
     CONFIG_KEY_PATH_RHO_MTX = "rho_mtx"
     CONFIG_KEY_PATH_TAU_MTX = "tau_mtx"
+    # Config matrix inversion parameters
+    CONFIG_KEY_INV_PARA = "inv_parameters"
+    # Sim
     CONFIG_KEY_PATH_OUT_DIR = "path_output"
     CONFIG_KEY_PATH_EP = "path_folder_EnergyPlus"
     CONFIG_KEY_PATH_EPW = "path_epw"
@@ -108,9 +113,14 @@ class EpLwrSimulationManager:
                          list_building_id: List[str], list_path_idf_file: List[str],
                          list_of_list_outdoor_surface_name: List[List[str]],
                          path_vf_mtx_crs_npz: str, path_eps_mtx_crs_npz: str,
-                         path_rho_mtx_crs_npz: str, path_tau_mtx_crs_npz: str) -> str:
+                         path_rho_mtx_crs_npz: str, path_tau_mtx_crs_npz: str,
+                         **kwargs) -> str:
         """
-        Creates a configuration file for the LWR-EP coupled simulation manager.
+        Creates a JSON configuration file for the LWR-EP coupled simulation manager.
+
+        This method ensures that all required input files and directories exist before
+        generating the configuration file. It also validates and integrates optional
+        parameters related to the GMRES-based matrix inversion method.
 
         :param path_dir_config: Path to the directory where the config file will be saved.
         :param path_dir_outputs: Path to the directory where the simulation outputs will be stored.
@@ -123,8 +133,34 @@ class EpLwrSimulationManager:
         :param path_eps_mtx_crs_npz: Path to the emissivity matrix in compressed sparse format.
         :param path_rho_mtx_crs_npz: Path to the reflectivity matrix in compressed sparse format.
         :param path_tau_mtx_crs_npz: Path to the transmissivity matrix in compressed sparse format.
+        :param kwargs: Optional parameters for the GMRES-based matrix inversion method.
+            - **tol** (float, optional): Overall inverse tolerance (default: 1e-5, valid range: 1e-10 to 1e-2).
+            - **maxiter** (int, optional): Maximum number of iterations (default: 150, valid range: 1 to 1000).
+            - **rtol** (float, optional): Relative tolerance within iterations on columns  (default: 5e-7, valid range: 1e-10 to 1e-5).
+            - **precondition** (bool, optional): Whether to apply preconditioning (default: False).
+            - **num_workers** (int, optional): Number of parallel workers (default: 0, valid range: 0 to 64).
+
         :return: Path to the generated configuration file.
         :raises FileNotFoundError: If required directories or files do not exist.
+        :raises ValueError: If invalid parameters are provided in `kwargs`.
+
+        Example usage:
+        ```
+        EpLwrSimulationManager.make_config_file(
+            path_dir_config="config/",
+            path_dir_outputs="outputs/",
+            path_epw_file="weather.epw",
+            path_energyplus_dir="/usr/local/EnergyPlus/",
+            list_building_id=["B1", "B2"],
+            list_path_idf_file=["building1.idf", "building2.idf"],
+            list_of_list_outdoor_surface_name=[["surf1", "surf2"], ["surf3"]],
+            path_vf_mtx_crs_npz="vf_matrix.npz",
+            path_eps_mtx_crs_npz="eps_matrix.npz",
+            path_rho_mtx_crs_npz="rho_matrix.npz",
+            path_tau_mtx_crs_npz="tau_matrix.npz",
+            tol=1e-6, maxiter=200  # Optional kwargs
+        )
+        ```
         """
 
         # Ensure the configuration directory exists
@@ -153,15 +189,18 @@ class EpLwrSimulationManager:
         config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES] = sum(
             len(lst) for lst in list_of_list_outdoor_surface_name)
         config_dict[cls.CONFIG_KEY_PATH_OUT_DIR] = path_dir_outputs
+        # Matrices
         config_dict[cls.CONFIG_KEY_PATH_VF_MTX] = path_vf_mtx_crs_npz
         config_dict[cls.CONFIG_KEY_PATH_EPS_MTX] = path_eps_mtx_crs_npz
         config_dict[cls.CONFIG_KEY_PATH_RHO_MTX] = path_rho_mtx_crs_npz
         config_dict[cls.CONFIG_KEY_PATH_TAU_MTX] = path_tau_mtx_crs_npz
+        config_dict[cls.CONFIG_KEY_INV_PARA] = check_inversion_parameters(**kwargs)
+
         config_dict[cls.CONFIG_KEY_PATH_EP] = path_energyplus_dir  # Added EnergyPlus directory
         config_dict[cls.CONFIG_KEY_PATH_EPW] = path_epw_file  # Added EPW file path
 
         # Define the path to the output configuration file
-        path_config_file = os.path.join(path_dir_config, "ep_lwr_sim_man_config.json")
+        path_config_file = os.path.join(path_dir_config, cls.CONFIG_FILE_NAME)
 
         # Save the configuration dictionary as a JSON file
         with open(path_config_file, 'w') as f:
@@ -210,7 +249,10 @@ class EpLwrSimulationManager:
         # Ensure the number of surface is consistent accross
         if vf_mtx.shape[0] != config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]:
             raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
-        #
+        # Generate the resolution matrices
+        resolution_mtx, total_srd_vf_list = compute_resolution_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
+        # Generate EpSimulationInstance for each building
+        sim_manager = add
 
 
 
@@ -225,6 +267,7 @@ class EpLwrSimulationManager:
         """
         #### Config file
         config_dict = self.load_config_file()
+        # check that the output dir
 
         #### Check if the size of the matrices fits the number of outdoor surfaces
         check_matrices(vf_matrix, eps_matrix, rho_matrix, tau_matrix)
@@ -240,7 +283,7 @@ class EpLwrSimulationManager:
 
         ### Initialize buildings
         # Make one folder per building
-        for bu
+
 
     def add_building(self, building_id: str, path_idf: str, outdoor_surface_name_list: List[str],
                      outdoor_surface_surrounding_surface_vf_dict: dict, outdoor_surface_sky_vf_dict: dict,

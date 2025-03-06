@@ -50,9 +50,9 @@ def compute_f_star_rho(vf_matrix: sp.csr_matrix,
     return f_star_rho
 
 
-def compute_resolution_matrix(vf_matrix: sp.csr_matrix,
-                              eps_matrix: sp.csr_matrix, rho_matrix: sp.csr_matrix,
-                              tau_matrix: sp.csr_matrix, **kwargs) -> (sp.csr_matrix, List):
+def compute_resolution_matrices(vf_matrix: sp.csr_matrix,
+                                eps_matrix: sp.csr_matrix, rho_matrix: sp.csr_matrix,
+                                tau_matrix: sp.csr_matrix, **kwargs) -> (sp.csr_matrix, List):
     """
 
     :param vf_matrix:
@@ -75,9 +75,9 @@ def compute_resolution_matrix(vf_matrix: sp.csr_matrix,
     diag_f_srd_epsilon_inv = [
         1 / (total_srd_vf_list[i] * eps_matrix[i, i]) if total_srd_vf_list[i] * eps_matrix[i, i] != 0 else 0
         for i in range(n)]
-
     inv_f_srd_epsilon = sp.diags(diag_f_srd_epsilon_inv, offsets=0, format="csr")
 
+    # Final resolution matrix
     resolution_mtx = inv_f_srd_epsilon@ (id_mtx - vf_matrix + tau_matrix @ vf_matrix) @ inv_f_star_rho @ eps_matrix
 
     # Check the result is csr
