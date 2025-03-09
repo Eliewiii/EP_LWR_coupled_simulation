@@ -20,7 +20,7 @@ from .lwr_idf_additionnal_strings import generate_surface_lwr_idf_additional_str
 
 class EpSimulationInstance:
 
-    def __init__(self, identifier: str, path_idf: str, path_output_dir: str, simulation_index: int):
+    def __init__(self, identifier: str, path_idf: str, path_output_dir: str):
         """
         Constructor of the class.
         :param identifier: str, The identifier of the building/simulation
@@ -56,7 +56,6 @@ class EpSimulationInstance:
         self._resolution_mtx = None
 
         # Synchronization attributes
-        self._simulation_index = simulation_index  # Index of the simulation, to synchronize the simulation and
         self._surface_index_min = None
         self._surface_index_max = None
 
@@ -109,7 +108,34 @@ class EpSimulationInstance:
     # ---- Generate object from simulation manager --------#
     # -----------------------------------------------------#
     @classmethod
-    def init_and_preprocess_to_pkl
+    def init_and_preprocess_to_pkl(cls,identifier, path_idf, path_output_dir, min_surface_index,
+                                   max_surface_index, outdoor_surface_id_list,
+                                   resolution_mtx, srd_vf_list,sky_vf_list=None,ground_vf_list=None):
+        """
+
+        :return:
+        """
+
+
+
+        # Create the object instance
+        ep_simulation_instance_obj = cls()
+        # Set outdoor surface and VF
+
+        # Set matrix
+
+        # Make an adjusted copy of the idf
+
+        # Pickle object
+        path_pkl_file = ep_simulation_instance.to_pkl(
+            path_folder=self._path_output_dir)
+
+        return path_pkl_file
+
+
+
+
+
 
 
 

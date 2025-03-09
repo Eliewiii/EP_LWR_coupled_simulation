@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import logging
+import pickle
 
 from scipy.sparse import csr_matrix
 from concurrent.futures import ProcessPoolExecutor
@@ -14,7 +15,7 @@ from typing import List
 import numpy as np
 
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
-from .utils import read_csr_matrices_from_npz, compute_resolution_matrices, check_matrices,check_inversion_parameters
+from .utils import read_csr_matrices_from_npz, compute_resolution_matrices, check_matrices,check_inversion_parameters, create_dir
 
 
 class EpLwrSimulationManager:
@@ -23,7 +24,7 @@ class EpLwrSimulationManager:
     CONFIG_BUILDING_ID_LIST = "building_id_list"
     CONFIG_BUILDING_ID = "building_id"
     CONFIG_PATH_IDF = "path_idf"
-    CONFIG_LIST_OUTDOOR_SURFACE_NAME = "list_outdoor_surface_name"
+    CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID = "list_outdoor_surface_name"
     CONFIG_NUM_OUTDOOR_SURFACES = "num_outdoor_surfaces"
     CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING = "num_outdoor_surfaces_per_building"
     # Config matrices
@@ -56,12 +57,16 @@ class EpLwrSimulationManager:
         """
         # Simulation
         self._building_id_list = []
-        self._ep_simulation_parameter_dict = {}
+        self._building_id_to_path_pkl_dict = {}
         # Paths to the output directory, EPW file, and EnergyPlus directory
         self._path_output_dir = None
         self._path_epw = None
         self._path_energyplus_dir = None
+
         self._set_paths_attributes(path_output_dir, path_epw, path_energyplus_dir)
+        #
+        self._num_outdoor_surfaces = 0
+
 
     def _set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
         """
@@ -91,9 +96,37 @@ class EpLwrSimulationManager:
                 f"Output directory already exists at {path_output_dir} and is not empty. Please empty it or choose another directory.")
         self._path_output_dir = path_output_dir
 
+
+    def _add_building_to_dict(self,building_id:str,path_to_pkl:str):
+        """
+
+        :param building_id:
+        :param path_to_pkl:
+        :return:
+        """
+
+        self._building_id_list.append(building_id)
+        self._building_id_to_path_pkl_dict[building_id] = path_to_pkl
+
+
     # -----------------------------------------------------#
     # --------------------- Properties --------------------#
     # -----------------------------------------------------#
+
+    @property
+    def path_output_dir(self) -> str:
+        """Read-only property for the output directory path."""
+        return self._path_output_dir
+
+    @property
+    def path_epw(self) -> str:
+        """Read-only property for the EPW file path."""
+        return self._path_epw
+
+    @property
+    def path_energyplus_dir(self) -> str:
+        """Read-only property for the EnergyPlus directory path."""
+        return self._path_energyplus_dir
 
     @property
     def num_building(self):
@@ -101,8 +134,39 @@ class EpLwrSimulationManager:
 
     @property
     def num_outdoor_surfaces(self):
-        return sum([ep_simulation_instance.num_outdoor_surfaces for ep_simulation_instance in
-                    self._ep_simulation_instance_dict.values()])
+        return self._num_outdoor_surfaces
+
+    # -----------------------------------------------------#
+    # -------------- Export and Import --------------------#
+    # -----------------------------------------------------#
+
+    def to_pkl(self, path_folder: str, file_name: str = None,
+               get_path_only: bool = False) -> str:
+        """
+        Save the instance to a pickle file.
+        :param path_folder: str, the folder path where the pickle file will be saved.
+        :param file_name: str, the name of the pickle file.
+        :param get_path_only: bool, if True, return the path of the pickle file only, if False, save the instance to the
+        pickle file and return the path.
+        """
+        if file_name is None:
+            file_name = f"ep_lwr_simulation_manager.pkl"
+        path_pkl_file = os.path.join(path_folder, file_name)
+        if not get_path_only:
+            with open(path_pkl_file, 'wb') as f:
+                pickle.dump(self, f)
+        return path_pkl_file
+
+    @staticmethod
+    def from_pkl(path_pkl_file) -> "EpLwrSimulationManager":
+        """
+        Load a RadiativeSurfaceManager object from a pickle file.
+        :param path_pkl_file: str, the path of the pickle file.
+        :return: RadiativeSurfaceManager, the RadiativeSurfaceManager object.
+        """
+        with open(path_pkl_file, 'rb') as f:
+            ep_simulation_instance = pickle.load(f)
+        return ep_simulation_instance
 
     # -----------------------------------------------------#
     # --------------------- Config file -------------------#
@@ -177,7 +241,7 @@ class EpLwrSimulationManager:
             building_id: {
                 cls.CONFIG_BUILDING_ID: building_id,
                 cls.CONFIG_PATH_IDF: path_idf,
-                cls.CONFIG_LIST_OUTDOOR_SURFACE_NAME: list_outdoor_surface_name,
+                cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID: list_outdoor_surface_name,
                 cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING: len(list_outdoor_surface_name),
             }
             for building_id, path_idf, list_outdoor_surface_name in
@@ -209,7 +273,7 @@ class EpLwrSimulationManager:
         return path_config_file
 
     @staticmethod
-    def load_config_file(path_config_file: str) -> dict:
+    def _load_config_file(path_config_file: str) -> dict:
         """
         Loads a configuration file in JSON format.
 
@@ -228,16 +292,17 @@ class EpLwrSimulationManager:
         return config_dict
 
     @classmethod
-    def set_up_coupled_lwr_simulation_from_config_file(cls, path_config_file):
+    def set_up_coupled_lwr_simulation_from_config_file(cls, path_config_file:str, to_pkl:bool = False):
         """
 
         :param path_config_file:
+        :param to_pkl
         :return:
         """
-        config_dict = cls.load_config_file(path_config_file=path_config_file)
+        config_dict = cls._load_config_file(path_config_file=path_config_file)
 
-        sim_manager = cls(path_output_dir=cls.CONFIG_KEY_PATH_OUT_DIR, path_epw=cls.CONFIG_KEY_PATH_EPW,
-                          path_energyplus_dir=cls.CONFIG_KEY_PATH_EP)
+        sim_manager = cls(path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR], path_epw=config_dict[cls.CONFIG_KEY_PATH_EPW],
+                          path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP])
         # Load and check matrices
         vf_mtx, eps_mtx, rho_mtx, tau_mtx = read_csr_matrices_from_npz(
             config_dict[cls.CONFIG_KEY_PATH_VF_MTX],
@@ -249,11 +314,37 @@ class EpLwrSimulationManager:
         # Ensure the number of surface is consistent accross
         if vf_mtx.shape[0] != config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]:
             raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
+        sim_manager._num_outdoor_surfaces = config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]
         # Generate the resolution matrices
         resolution_mtx, total_srd_vf_list = compute_resolution_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
         # Generate EpSimulationInstance for each building
-        sim_manager = add
+        min_surface_index = 0
+        for index, building_id in enumerate(config_dict[sim_manager.CONFIG_BUILDING_ID_LIST]):
+            # Make one folder per building
+            path_sim_dir_building = os.path.join(sim_manager.path_output_dir,building_id)
+            create_dir(path_dir=path_sim_dir_building,overwrite=True)
+            # Initialize the EpSimulationInstance and save it to pkl
+            max_surface_index = min_surface_index + config_dict[building_id[cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING]]-1
+            path_pkl_file = EpSimulationInstance.init_and_preprocess_to_pkl(
+                identifier= building_id,
+                path_output_dir=path_sim_dir_building,
+                outdoor_surface_id_list= config_dict[building_id][cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID],
+                min_surface_index=min_surface_index,
+                max_surface_index=max_surface_index,
+                resolution_mtx=resolution_mtx,
+                srd_vf_list=total_srd_vf_list
+            )
+            sim_manager._add_building_to_dict(building_id=building_id,path_to_pkl=path_pkl_file)
 
+            min_surface_index += max_surface_index + 1
+
+
+
+        # Save the manager to pkl if needed
+        if to_pkl:
+            sim_manager.to_pkl(path_folder=sim_manager.path_output_dir)
+
+        return sim_manager
 
 
     # -----------------------------------------------------#
@@ -282,7 +373,7 @@ class EpLwrSimulationManager:
         # get final matrix
 
         ### Initialize buildings
-        # Make one folder per building
+
 
 
     def add_building(self, building_id: str, path_idf: str, outdoor_surface_name_list: List[str],
