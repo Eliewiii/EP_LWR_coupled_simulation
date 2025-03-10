@@ -56,6 +56,7 @@ class EpSimulationInstance:
         self._resolution_mtx = None
 
         # Synchronization attributes
+        self._simulation_index = None
         self._surface_index_min = None
         self._surface_index_max = None
 
@@ -108,7 +109,7 @@ class EpSimulationInstance:
     # ---- Generate object from simulation manager --------#
     # -----------------------------------------------------#
     @classmethod
-    def init_and_preprocess_to_pkl(cls,identifier, path_idf, path_output_dir, min_surface_index,
+    def init_and_preprocess_to_pkl(cls,identifier,simulation_index, path_idf, path_output_dir, min_surface_index,
                                    max_surface_index, outdoor_surface_id_list,
                                    resolution_mtx, srd_vf_list,sky_vf_list=None,ground_vf_list=None):
         """

@@ -15,7 +15,8 @@ from typing import List
 import numpy as np
 
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
-from .utils import read_csr_matrices_from_npz, compute_resolution_matrices, check_matrices,check_inversion_parameters, create_dir
+from .utils import read_csr_matrices_from_npz, compute_resolution_matrices, check_matrices, \
+    check_inversion_parameters, create_dir
 
 
 class EpLwrSimulationManager:
@@ -67,7 +68,6 @@ class EpLwrSimulationManager:
         #
         self._num_outdoor_surfaces = 0
 
-
     def _set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
         """
         Set the paths to the output directory, EPW file, and EnergyPlus directory.
@@ -96,8 +96,7 @@ class EpLwrSimulationManager:
                 f"Output directory already exists at {path_output_dir} and is not empty. Please empty it or choose another directory.")
         self._path_output_dir = path_output_dir
 
-
-    def _add_building_to_dict(self,building_id:str,path_to_pkl:str):
+    def _add_building_to_dict(self, building_id: str, path_to_pkl: str):
         """
 
         :param building_id:
@@ -107,7 +106,6 @@ class EpLwrSimulationManager:
 
         self._building_id_list.append(building_id)
         self._building_id_to_path_pkl_dict[building_id] = path_to_pkl
-
 
     # -----------------------------------------------------#
     # --------------------- Properties --------------------#
@@ -292,18 +290,33 @@ class EpLwrSimulationManager:
         return config_dict
 
     @classmethod
-    def set_up_coupled_lwr_simulation_from_config_file(cls, path_config_file:str, to_pkl:bool = False):
+    def set_up_coupled_lwr_simulation_from_config_file(cls, path_config_file: str, to_pkl: bool = False):
         """
+        Initializes an EpLwrSimulationManager instance from a configuration file.
 
-        :param path_config_file:
-        :param to_pkl
-        :return:
+        This method loads the simulation configuration, validates required matrices,
+        and initializes individual EpSimulationInstance objects for each building.
+        The simulation instances are serialized into .pkl files for independent
+        execution in parallel processes.
+
+        :param path_config_file: Path to the configuration JSON file.
+        :param to_pkl: If True, saves the initialized EpCoupledSimulationManager instance as a .pkl file.
+        :return: Initialized EpCoupledSimulationManager instance.
+        :raises FileNotFoundError: If the configuration file is missing.
+        :raises KeyError: If expected configuration keys are missing.
+        :raises ValueError: If matrix dimensions do not match the expected number of outdoor surfaces.
         """
+        # Load configuration
         config_dict = cls._load_config_file(path_config_file=path_config_file)
 
-        sim_manager = cls(path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR], path_epw=config_dict[cls.CONFIG_KEY_PATH_EPW],
-                          path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP])
-        # Load and check matrices
+        # Initialize the simulation manager
+        sim_manager = cls(
+            path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR],
+            path_epw=config_dict[cls.CONFIG_KEY_PATH_EPW],
+            path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP]
+        )
+
+        # Load and validate simulation matrices
         vf_mtx, eps_mtx, rho_mtx, tau_mtx = read_csr_matrices_from_npz(
             config_dict[cls.CONFIG_KEY_PATH_VF_MTX],
             config_dict[cls.CONFIG_KEY_PATH_EPS_MTX],
@@ -311,70 +324,56 @@ class EpLwrSimulationManager:
             config_dict[cls.CONFIG_KEY_PATH_TAU_MTX],
         )
         check_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
-        # Ensure the number of surface is consistent accross
+
+        # Validate matrix size consistency
         if vf_mtx.shape[0] != config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]:
-            raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
+            raise ValueError("The matrix dimensions must match the number of outdoor surfaces.")
+
         sim_manager._num_outdoor_surfaces = config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]
-        # Generate the resolution matrices
+
+        # Compute resolution matrices
         resolution_mtx, total_srd_vf_list = compute_resolution_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
+
         # Generate EpSimulationInstance for each building
-        min_surface_index = 0
-        for index, building_id in enumerate(config_dict[sim_manager.CONFIG_BUILDING_ID_LIST]):
-            # Make one folder per building
-            path_sim_dir_building = os.path.join(sim_manager.path_output_dir,building_id)
-            create_dir(path_dir=path_sim_dir_building,overwrite=True)
-            # Initialize the EpSimulationInstance and save it to pkl
-            max_surface_index = min_surface_index + config_dict[building_id[cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING]]-1
+        min_surface_index = 0  # Tracks the portion of the shared temperature vector
+
+        for building_id in config_dict[cls.CONFIG_BUILDING_ID_LIST]:
+            # Create directory for the building's simulation data
+            path_sim_dir_building = os.path.join(sim_manager.path_output_dir, building_id)
+            create_dir(path_dir=path_sim_dir_building, overwrite=True)
+
+            # Define surface index range for this building
+            num_surfaces = config_dict[building_id][cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING]
+            max_surface_index = min_surface_index + num_surfaces - 1
+
+            # Initialize and serialize the EpSimulationInstance
             path_pkl_file = EpSimulationInstance.init_and_preprocess_to_pkl(
-                identifier= building_id,
+                identifier=building_id,
+                simulation_index=sim_manager.num_building,
                 path_output_dir=path_sim_dir_building,
-                outdoor_surface_id_list= config_dict[building_id][cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID],
+                path_idf=config_dict[building_id][cls.CONFIG_PATH_IDF],
+                outdoor_surface_id_list=config_dict[building_id][cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID],
                 min_surface_index=min_surface_index,
                 max_surface_index=max_surface_index,
                 resolution_mtx=resolution_mtx,
                 srd_vf_list=total_srd_vf_list
             )
-            sim_manager._add_building_to_dict(building_id=building_id,path_to_pkl=path_pkl_file)
 
-            min_surface_index += max_surface_index + 1
+            # Register the building simulation instance in the manager
+            sim_manager._add_building_to_dict(building_id=building_id, path_to_pkl=path_pkl_file)
 
+            # Update min_surface_index for next building
+            min_surface_index = max_surface_index + 1
 
-
-        # Save the manager to pkl if needed
+        # Save the simulation manager as a .pkl file if requested
         if to_pkl:
             sim_manager.to_pkl(path_folder=sim_manager.path_output_dir)
 
         return sim_manager
 
-
     # -----------------------------------------------------#
     # --------------------- Methods -----------------------#
     # -----------------------------------------------------#
-
-    def set_up_lwr_coupled_simulation(self, path_config_file: str, vf_matrix: csr_matrix,
-                                      eps_matrix: csr_matrix, rho_matrix: csr_matrix, tau_matrix: csr_matrix):
-        """
-        Set up the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings.
-        """
-        #### Config file
-        config_dict = self.load_config_file()
-        # check that the output dir
-
-        #### Check if the size of the matrices fits the number of outdoor surfaces
-        check_matrices(vf_matrix, eps_matrix, rho_matrix, tau_matrix)
-        if vf_matrix.shape[0] != self.num_outdoor_surfaces:
-            raise ValueError("The size of the matrix must fit the number of outdoor surfaces.")
-
-        #### Process the matrices
-
-        # get sum of view factors for each surface
-        vf_tot_list = compute_total_vf(vf_matrix)
-
-        # get final matrix
-
-        ### Initialize buildings
-
-
 
     def add_building(self, building_id: str, path_idf: str, outdoor_surface_name_list: List[str],
                      outdoor_surface_surrounding_surface_vf_dict: dict, outdoor_surface_sky_vf_dict: dict,
