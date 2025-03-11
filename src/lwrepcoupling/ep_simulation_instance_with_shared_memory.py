@@ -11,7 +11,7 @@ import numpy as np
 
 from copy import deepcopy
 from multiprocessing import shared_memory
-from typing import List
+from typing import List, Optional
 
 from .pyenergyplus.api import EnergyPlusAPI
 from .lwr_idf_additionnal_strings import generate_surface_lwr_idf_additional_string, \
@@ -41,8 +41,8 @@ class EpSimulationInstance:
         # Geometry
         self._outdoor_surface_name_list = []
         self._outdoor_surface_surrounding_surface_vf_list = []
-        self._outdoor_surface_sky_vf_dict = {}
-        self._outdoor_surface_ground_vf_dict = {}
+        self._outdoor_surface_sky_vf_list = []
+        self._outdoor_surface_ground_vf_list = []
         # todo: potentially need to add the emissivity or other related parameters
 
         # Handlers
@@ -52,7 +52,6 @@ class EpSimulationInstance:
         self._surrounding_surface_temperature_schedule_temperature_handler_list = []
 
         # LWR data
-        self._vf_epsilon_matrix = None
         self._resolution_mtx = None
 
         # Synchronization attributes
@@ -70,114 +69,129 @@ class EpSimulationInstance:
     # -----------------------------------------------------#
 
     @property
-    def num_outdoor_surfaces(self):
+    def num_outdoor_surfaces(self) -> int:
         return len(self._outdoor_surface_name_list)
 
     # -----------------------------------------------------#
     # -------------- Export and Import --------------------#
     # -----------------------------------------------------#
 
-    def to_pkl(self, path_folder: str, file_name: str = None,
+    def to_pkl(self, path_folder: str, file_name: Optional[str] = None,
                get_path_only: bool = False) -> str:
         """
         Save the instance to a pickle file.
-        :param path_folder: str, the folder path where the pickle file will be saved.
-        :param file_name: str, the name of the pickle file.
-        :param get_path_only: bool, if True, return the path of the pickle file only, if False, save the instance to the
-        pickle file and return the path.
+        :param path_folder: str, The folder path where the pickle file will be saved.
+        :param file_name: Optional[str], The name of the pickle file.
+        :param get_path_only: bool, If True, return the path of the pickle file only; otherwise, save the instance.
+        :return: str, The path of the pickle file.
         """
         if file_name is None:
             file_name = f"ep_sim_instance_{self._identifier}.pkl"
         path_pkl_file = os.path.join(path_folder, file_name)
+
         if not get_path_only:
-            with open(path_pkl_file, 'wb') as f:
-                pickle.dump(self, f)
+            try:
+                with open(path_pkl_file, 'wb') as f:
+                    pickle.dump(self, f)
+            except IOError as e:
+                raise RuntimeError(f"Error saving pickle file: {e}")
+
         return path_pkl_file
 
     @staticmethod
-    def from_pkl(path_pkl_file) -> "EpSimulationInstance":
+    def from_pkl(path_pkl_file: str) -> "EpSimulationInstance":
         """
-        Load a RadiativeSurfaceManager object from a pickle file.
-        :param path_pkl_file: str, the path of the pickle file.
-        :return: RadiativeSurfaceManager, the RadiativeSurfaceManager object.
+        Load an EpSimulationInstance object from a pickle file.
+        :param path_pkl_file: str, The path of the pickle file.
+        :return: EpSimulationInstance, The loaded instance.
         """
-        with open(path_pkl_file, 'rb') as f:
-            ep_simulation_instance = pickle.load(f)
-        return ep_simulation_instance
+        try:
+            with open(path_pkl_file, 'rb') as f:
+                return pickle.load(f)
+        except IOError as e:
+            raise RuntimeError(f"Error loading pickle file: {e}")
 
     # -----------------------------------------------------#
     # ---- Generate object from simulation manager --------#
     # -----------------------------------------------------#
+
     @classmethod
-    def init_and_preprocess_to_pkl(cls,identifier,simulation_index, path_idf, path_output_dir, min_surface_index,
-                                   max_surface_index, outdoor_surface_id_list,
-                                   resolution_mtx, srd_vf_list,sky_vf_list=None,ground_vf_list=None):
+    def init_and_preprocess_to_pkl(cls, identifier: str, simulation_index: int, path_idf: str,
+                                   path_output_dir: str, min_surface_index: int, max_surface_index: int,
+                                   outdoor_surface_id_list: List[str], resolution_mtx: np.ndarray,
+                                   srd_vf_list: List[float], sky_vf_list: Optional[List[float]] = None,
+                                   ground_vf_list: Optional[List[float]] = None) -> str:
         """
-
-        :return:
+        Initialize an instance, preprocess data, and save it as a pickle file.
+        :param identifier: str, The identifier of the building/simulation.
+        :param simulation_index: int, The index of the simulation in the manager.
+        :param path_idf: str, The path to the IDF file of the building.
+        :param path_output_dir: str, The path to the output directory of the simulation.
+        :param min_surface_index: int, The minimum index of the surfaces in shared memory.
+        :param max_surface_index: int, The maximum index of the surfaces in shared memory.
+        :param outdoor_surface_id_list: List[str], The list of outdoor surface names.
+        :param resolution_mtx: np.ndarray, The resolution matrix for the simulation.
+        :param srd_vf_list: List[float], The list of view factors to surrounding surfaces.
+        :param sky_vf_list: Optional[List[float]], The list of view factors to the sky.
+        :param ground_vf_list: Optional[List[float]], The list of view factors to the ground.
+        :return: str, The path to the saved pickle file.
         """
-
-
-
-        # Create the object instance
-        ep_simulation_instance_obj = cls()
-        # Set outdoor surface and VF
-
-        # Set matrix
-
-        # Make an adjusted copy of the idf
-
-        # Pickle object
-        path_pkl_file = ep_simulation_instance.to_pkl(
-            path_folder=self._path_output_dir)
-
-        return path_pkl_file
-
-
-
-
-
-
-
+        ep_simulation_instance_obj = cls(identifier=identifier, path_idf=path_idf,
+                                         path_output_dir=path_output_dir)
+        ep_simulation_instance_obj._set_simulation_index(simulation_index)
+        ep_simulation_instance_obj._set_min_and_max_surface_index(min_surface_index, max_surface_index)
+        ep_simulation_instance_obj._set_outdoor_surfaces_and_view_factors(outdoor_surface_id_list,
+                                                                          srd_vf_list, sky_vf_list,
+                                                                          ground_vf_list)
+        ep_simulation_instance_obj.set_vf_matrices(resolution_mtx)
+        ep_simulation_instance_obj.adjust_idf()
+        return ep_simulation_instance_obj.to_pkl(path_output_dir)
 
     # -----------------------------------------------------#
     # ------------------ Init Method ----------------------#
     # -----------------------------------------------------#
 
-    def set_outdoor_surfaces_and_view_factors(self, outdoor_surface_name_list: List[str],
-                                              outdoor_surface_surrounding_surface_vf_list: List[float],
-                                              outdoor_surface_sky_vf_dict: dict,
-                                              outdoor_surface_ground_vf_dict: dict,
-                                              manager_num_outdoor_surfaces: int):
+    def _set_simulation_index(self, simulation_index: int):
+        """
+        Set the simulation index.
+        :param simulation_index: int, The index of the simulation in the manager.
+        """
+        self._simulation_index = simulation_index
+
+    def _set_min_and_max_surface_index(self, min_surface_index, max_surface_index):
+        """
+        Set the minimum and maximum index of the surfaces in the shared memory.
+        :param min_surface_index: int, The minimum index of the surfaces in the shared memory
+        :param max_surface_index: int, The maximum index of the surfaces in the shared memory
+        :return:
+        """
+        # todo : add some checks
+        self._surface_index_min = min_surface_index
+        self._surface_index_max = max_surface_index
+
+    def _set_outdoor_surfaces_and_view_factors(self, outdoor_surface_name_list: List[str],
+                                               outdoor_surface_surrounding_surface_vf_list: List[float],
+                                               outdoor_surface_sky_vf_list: Optional[List[float]],
+                                               outdoor_surface_ground_vf_list: Optional[List[float]]):
         """
         Set the outdoor surfaces and the view factors for the simulation.
-        :param outdoor_surface_name_list: list, List of the names of the outdoor surfaces
-        :param outdoor_surface_surrounding_surface_vf_dict: dict, Dictionary of the cumulative view factors between the outdoor
-        surfaces and the surrounding surfaces
-        :param outdoor_surface_sky_vf_dict: dict, Dictionary of the view factors between the outdoor surfaces and the sky
-        :param outdoor_surface_ground_vf_dict: dict, Dictionary of the view factors between the outdoor surfaces and the ground
-        :param manager_num_outdoor_surfaces: int, The number of outdoor surfaces in the manager to set the index boundaries
-        for the access to the shared memory
-        :return:
+        Ensures all input lists have the same length.
+        :param outdoor_surface_name_list: List[str], The list of the names of the outdoor surfaces.
+        :param outdoor_surface_surrounding_surface_vf_list: List[float], The list of the view factors to the surrounding surfaces.
+        :param outdoor_surface_sky_vf_list: Optional[List[float]], The list of the view factors to the sky.
+        :param outdoor_surface_ground_vf_list: Optional[List[float]], The list of the view factors to the ground.
         """
-        # Set surfaces
         self._outdoor_surface_name_list = outdoor_surface_name_list
         self._outdoor_surface_surrounding_surface_vf_list = outdoor_surface_surrounding_surface_vf_list
-        self._outdoor_surface_sky_vf_dict = outdoor_surface_sky_vf_dict
-        self._outdoor_surface_ground_vf_dict = outdoor_surface_ground_vf_dict
-        # Set the index boundaries for the access to the shared memory
-        self._surface_index_min = manager_num_outdoor_surfaces
-        self._surface_index_max = manager_num_outdoor_surfaces + len(outdoor_surface_name_list) - 1
+        self._outdoor_surface_sky_vf_list = outdoor_surface_sky_vf_list or []
+        self._outdoor_surface_ground_vf_list = outdoor_surface_ground_vf_list or []
 
-    def set_vf_matrices(self, vf_matrix, vf_eps_matrix):
+    def set_vf_matrices(self, resolution_mxt):
         """
 
-        :param vf_matrix:
-        :param vf_eps_matrix:
-        :return:
+        :param resolution_mxt:
         """
-
-        # Todo :
+        self._resolution_mtx = resolution_mxt
 
     def adjust_idf(self):
         """
@@ -205,8 +219,8 @@ class EpSimulationInstance:
             additional_strings += generate_surface_lwr_idf_additional_string(
                 surface_name=surface_name,
                 cumulated_ext_surf_view_factor=self._outdoor_surface_surrounding_surface_vf_list[i],
-                sky_view_factor=self._outdoor_surface_sky_vf_dict[surface_name],
-                ground_view_factor=self._outdoor_surface_ground_vf_dict[surface_name]
+                sky_view_factor=self._outdoor_surface_sky_vf_list[i],
+                ground_view_factor=self._outdoor_surface_ground_vf_list[i]
             )
             # Add the schedule name to the dictionary
             self._schedule_name_list[i] = name_surrounding_surface_temperature_schedule(
@@ -353,9 +367,14 @@ class EpSimulationInstance:
         to test the synchronization of the shared memory and the barrier.
         :return:
         """
+
+
         # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
         if not self._schedule_actuator_handle_list:
             return
+
+        # current_time = api.exchange.current_sim_time(state)
+
 
         # todo Need to make sure all the simulation are at the same time step, as EnergyPlus might adjust the time step if needed.
         # todo Need to check the timee step and make the simulation wait if needed with a second shared memory and barrier
@@ -380,18 +399,6 @@ class EpSimulationInstance:
         for i, srd_mrt in enumerate(list_srd_mean_radiant_temperature_in_c):
             self._api.exchange.set_actuator_value(state,
                                                   self._schedule_actuator_handle_list[i], srd_mrt)
-            # # get the current value of the schedule
-            # current_value = self._api.exchange.get_variable_value(state,
-            #                                                       self._surrounding_surface_temperature_schedule_temperature_handler_list[
-            #                                                           i])
-            # # assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
-
-        # # -- For testing --#
-        # # Get current simulation time (in hours)
-        # self._test_current_time_list.append(self._api.exchange.current_sim_time(state))
-        # self._test_temperature_list.append(deepcopy(np.array(surface_temperatures_list) - 273.15))
-        # self._test_surrounding_surface_temperature_list.append(mean_surface_temperature)
-        # -----------------#
 
     def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock,
                                                   synch_point_barrier):
@@ -447,8 +454,7 @@ class EpSimulationInstance:
     # -----------------------------------------------------#
 
     @classmethod
-    def run_coupled_simulation_for_ep_instance(cls, path_ep_instance_pkl: str,
-                                               path_file_resolution_mtx_npz: str, **kwargs):
+    def run_coupled_simulation_for_ep_instance(cls, path_ep_instance_pkl: str, **kwargs):
         """
 
         :param path_ep_instance_pkl:
@@ -458,8 +464,6 @@ class EpSimulationInstance:
         """
         # Load the ep object
         ep_sim_inst_obj = cls.from_pkl(path_pkl_file=path_ep_instance_pkl)
-        # Assign the resolution matrix
-
         # Run the simulation
         ep_sim_inst_obj.run_ep_simulation(**kwargs)
 
@@ -475,7 +479,7 @@ class EpSimulationInstance:
         :param path_energyplus_dir: str, The path to the EnergyPlus directory
         :return: self: EpSimulationInstance, The instance of the simulation to update the one in the manager
         """
-        # Point to the shared memory
+        # Point to the shared memory for surface temperature access
         shm = shared_memory.SharedMemory(name=shared_memory_name)
         shared_array = np.ndarray(shared_memory_array_size, dtype=np.float64, buffer=shm.buf)
 
@@ -486,20 +490,12 @@ class EpSimulationInstance:
         # request the variables to access schedule and surface temperature values during the simulation
         self.request_variables_before_running_simulation()
 
-        # -- For testing --#
-        self.request_additional_variables_before_running_simulation_for_testing()
-
-        # -----------------#
-
         # Make wrapper for the main callback function
         def simulation_callback_function(state):
             """
             Wrapper for the main callback function to pass arguments (which are not allowed in the callback function).
             :param state:
-            :return:
             """
-            # return self.coupled_simulation_callback_function(state, shared_array, shared_memory_lock,
-            #                                                  synch_point_barrier)
             return self.coupled_simulation_callback_function_test(state, shared_array, shared_memory_lock,
                                                                   synch_point_barrier)
 
@@ -508,14 +504,8 @@ class EpSimulationInstance:
                                                          self.initialize_actuator_handler_callback_function)
         self._api.runtime.callback_begin_new_environment(self._state,
                                                          self.init_surface_temperature_handlers_call_back_function)
-
-        # -- For testing --#
-        self._api.runtime.callback_begin_new_environment(self._state,
-                                                         self.init_surrounding_surface_schedule_handlers_call_back_function_for_testing)
-        # -----------------#
-
         self._api.runtime.callback_end_zone_timestep_after_zone_reporting(self._state,
-                                                                          simulation_callback_function)  # todo: might be change to the end of the timestep
+                                                                          simulation_callback_function)
 
         # Run the EnergyPlus simulation
         self._api.runtime.run_energyplus(
@@ -528,4 +518,4 @@ class EpSimulationInstance:
             ]
         )
 
-        return self._test_current_time_list, self._test_temperature_list, self._test_surrounding_surface_temperature_list
+        return 0
