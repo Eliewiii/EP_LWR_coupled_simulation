@@ -157,15 +157,20 @@ class EpLwrSimulationManager:
                 pickle.dump(self, f)
         return path_pkl_file
 
-    @staticmethod
-    def from_pkl(path_pkl_file) -> "EpLwrSimulationManager":
+    @classmethod
+    def from_pkl(cls, path_pkl_file: str) -> "EpLwrSimulationManager":
         """
         Load a RadiativeSurfaceManager object from a pickle file.
         :param path_pkl_file: str, the path of the pickle file.
         :return: RadiativeSurfaceManager, the RadiativeSurfaceManager object.
         """
+        if not os.path.isfile(path_pkl_file):
+            raise FileNotFoundError(f"File not found: {path_pkl_file}")
         with open(path_pkl_file, 'rb') as f:
             ep_simulation_instance = pickle.load(f)
+        if not isinstance(ep_simulation_instance, cls):
+            raise TypeError(f"Expected {cls}, but got {type(ep_simulation_instance)}")
+
         return ep_simulation_instance
 
     # -----------------------------------------------------#
@@ -238,7 +243,6 @@ class EpLwrSimulationManager:
         generating the configuration file. It also validates and integrates optional
         parameters related to the GMRES-based matrix inversion method.
 
-        :param path_dir_config: Path to the directory where the config file will be saved.
         :param path_dir_outputs: Path to the directory where the simulation outputs will be stored.
         :param path_epw_file: Path to the EPW weather file required for the EnergyPlus simulation.
         :param path_energyplus_dir: Path to the directory containing EnergyPlus.
@@ -340,7 +344,6 @@ class EpLwrSimulationManager:
 
         return cls.set_up_coupled_lwr_simulation_from_config_dict(config_dict=config_dict, to_pkl=to_pkl)
 
-
     @classmethod
     def set_up_coupled_lwr_simulation_from_config_dict(cls, config_dict: dict, to_pkl: bool = False):
         """
@@ -424,18 +427,28 @@ class EpLwrSimulationManager:
     # -----------------------------------------------------#
     # -----------------  Run Simulation     ---------------#
     # -----------------------------------------------------#
-    def run_lwr_coupled_simulation_from_subprocess(self):
-        """
 
-        :return:
+    @staticmethod
+    def run_lwr_simulation_in_subprocess_from_pkl(path_pkl_file: str):
         """
-        path_pkl_file = self.to_pkl(path_folder=self.path_output_dir)
+        Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
+        :param path_pkl_file: Path to the pickle file containing the EpLwrSimulationManager instance.
+        """
+        if not os.path.isfile(path_pkl_file):
+            raise FileNotFoundError(f"File not found: {path_pkl_file}")
 
         result = subprocess.run(
             [sys.executable, '-m', 'lwrepcoupling.main_run_lwr_simulation', path_pkl_file],
             text=True
         )
 
+    def run_lwr_coupled_simulation_in_subprocess(self):
+        """
+        :return:
+        """
+        path_pkl_file = self.to_pkl(path_folder=self.path_output_dir)
+
+        self.run_lwr_simulation_in_subprocess_from_pkl(path_pkl_file=path_pkl_file)
 
     def run_lwr_coupled_simulation(self):
         """
