@@ -45,7 +45,7 @@ def compute_f_star_rho(vf_matrix: sp.csr_matrix,
     # Identity matrix
     id_mtx = sp.eye(n, format='csr')
     # F^{*rho} matrix to inverse
-    f_star_rho = id_mtx - rho_matrix.dot(vf_matrix)
+    f_star_rho = id_mtx - rho_matrix @ vf_matrix
 
     return f_star_rho
 
@@ -67,7 +67,7 @@ def compute_resolution_matrices(vf_matrix: sp.csr_matrix,
     id_mtx = sp.eye(n, format='csr')
     # F^{*rho} matrix to inverse
     f_star_rho = compute_f_star_rho(vf_matrix=vf_matrix, rho_matrix=rho_matrix)
-    inv_f_star_rho, = compute_full_inverse_via_gmres_parallel(mtx=f_star_rho, **kwargs)
+    inv_f_star_rho,_ = compute_full_inverse_via_gmres_parallel(mtx=f_star_rho, **kwargs)
 
     # Get total VF from surrounding surfaces
     total_srd_vf_list = compute_total_vf(vf_matrix=vf_matrix)

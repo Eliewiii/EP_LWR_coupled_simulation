@@ -219,12 +219,12 @@ class EpSimulationInstance:
             additional_strings += generate_surface_lwr_idf_additional_string(
                 surface_name=surface_name,
                 cumulated_ext_surf_view_factor=self._outdoor_surface_surrounding_surface_vf_list[i],
-                sky_view_factor=self._outdoor_surface_sky_vf_list[i],
-                ground_view_factor=self._outdoor_surface_ground_vf_list[i]
+                # sky_view_factor=self._outdoor_surface_sky_vf_list[i],
+                # ground_view_factor=self._outdoor_surface_ground_vf_list[i]
             )
             # Add the schedule name to the dictionary
-            self._schedule_name_list[i] = name_surrounding_surface_temperature_schedule(
-                surface_name)
+            self._schedule_name_list.append(name_surrounding_surface_temperature_schedule(
+                surface_name))
         return additional_strings
 
     # -----------------------------------------------------#
@@ -238,7 +238,7 @@ class EpSimulationInstance:
         :return:
         """
 
-        return (np.power(self._resolution_mtx @ temperature_p4_vector.T, 1 / 4) - 273.15).tolist()
+        return (np.power(temperature_p4_vector.T[self.num_outdoor_surfaces] - self._resolution_mtx @ temperature_p4_vector.T, 1 / 4) - 273.15).tolist()
 
     # -----------------------------------------------------#
     # ----------- EnergyPlus API Preparation --------------#
@@ -276,7 +276,7 @@ class EpSimulationInstance:
                 raise ValueError(
                     f"Failed to create actuator for schedule {self._schedule_name_list[i]}")
             else:
-                self._schedule_actuator_handle_list[i] = schedule_actuator_handle
+                self._schedule_actuator_handle_list.append(schedule_actuator_handle)
 
     def init_surface_temperature_handlers_call_back_function(self, state):
         """
@@ -284,10 +284,10 @@ class EpSimulationInstance:
         Should be run at the end of the warmup period.
         """
         for i, surface_name in enumerate(self._outdoor_surface_name_list):
-            self._surface_temp_handler_list[i] = self._api.exchange.get_variable_handle(
+            self._surface_temp_handler_list.append(self._api.exchange.get_variable_handle(
                 state,
                 "SURFACE OUTSIDE FACE TEMPERATURE",
-                surface_name)
+                surface_name))
 
     def init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self, state):
         """
@@ -296,9 +296,9 @@ class EpSimulationInstance:
         For testing purposes only as it is not needed for the LWR computation.
         """
         for i, surface_name in enumerate(self._outdoor_surface_name_list):
-            self._surrounding_surface_temperature_schedule_temperature_handler_list[
-                i] = self._api.exchange.get_variable_handle(state, "Schedule Value",
-                                                            self._schedule_name_list[i])
+            self._surrounding_surface_temperature_schedule_temperature_handler_list.append(
+                self._api.exchange.get_variable_handle(state, "Schedule Value",
+                                                       self._schedule_name_list[i]))
 
     def get_surface_temperature_of_all_outdoor_surfaces_in_kelvin(self) -> List[float]:
         """
@@ -368,13 +368,11 @@ class EpSimulationInstance:
         :return:
         """
 
-
         # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
         if not self._schedule_actuator_handle_list:
             return
 
         # current_time = api.exchange.current_sim_time(state)
-
 
         # todo Need to make sure all the simulation are at the same time step, as EnergyPlus might adjust the time step if needed.
         # todo Need to check the timee step and make the simulation wait if needed with a second shared memory and barrier
@@ -454,7 +452,7 @@ class EpSimulationInstance:
     # -----------------------------------------------------#
 
     @classmethod
-    def run_coupled_simulation_for_ep_instance(cls, path_ep_instance_pkl: str, **kwargs):
+    def run_coupled_simulation_from_ep_instance(cls, path_ep_instance_pkl: str, **kwargs):
         """
 
         :param path_ep_instance_pkl:
@@ -496,7 +494,7 @@ class EpSimulationInstance:
             Wrapper for the main callback function to pass arguments (which are not allowed in the callback function).
             :param state:
             """
-            return self.coupled_simulation_callback_function_test(state, shared_array, shared_memory_lock,
+            return self.coupled_simulation_callback_function(state, shared_array, shared_memory_lock,
                                                                   synch_point_barrier)
 
         # Set the callback functions to run at the various moment of the simulation

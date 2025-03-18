@@ -50,7 +50,7 @@ class EpLwrSimulationManager:
     # -------------------- Initialization------------------#
     # -----------------------------------------------------#
 
-    def __init__(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
+    def __init__(self):
         """
         Initialize the EnergyPlus simulation manager for the coupled long-wave radiation (LWR) simulation.
         :param path_output_dir: Path to the output directory, where the simulation will be run. It can be either
@@ -65,8 +65,6 @@ class EpLwrSimulationManager:
         self._path_output_dir = None
         self._path_epw = None
         self._path_energyplus_dir = None
-
-        self._set_paths_attributes(path_output_dir, path_epw, path_energyplus_dir)
         #
         self._num_outdoor_surfaces = 0
 
@@ -363,11 +361,10 @@ class EpLwrSimulationManager:
         """
 
         # Initialize the simulation manager
-        sim_manager = cls(
-            path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR],
+        sim_manager = cls()
+        sim_manager._set_paths_attributes(path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR],
             path_epw=config_dict[cls.CONFIG_KEY_PATH_EPW],
-            path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP]
-        )
+            path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP])
 
         # Load and validate simulation matrices
         vf_mtx, eps_mtx, rho_mtx, tau_mtx = read_csr_matrices_from_npz(
@@ -432,6 +429,7 @@ class EpLwrSimulationManager:
     def run_lwr_simulation_in_subprocess_from_pkl(path_pkl_file: str):
         """
         Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
+        The simulation is run in a subprocess to avoid duplicating the current process, which can be heavy for simulations at th eurban scale.
         :param path_pkl_file: Path to the pickle file containing the EpLwrSimulationManager instance.
         """
         if not os.path.isfile(path_pkl_file):
@@ -444,7 +442,7 @@ class EpLwrSimulationManager:
 
     def run_lwr_coupled_simulation_in_subprocess(self):
         """
-        :return:
+        Runs the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
         """
         path_pkl_file = self.to_pkl(path_folder=self.path_output_dir)
 
@@ -479,7 +477,8 @@ class EpLwrSimulationManager:
                 with ProcessPoolExecutor(max_workers=num_workers) as executor:
                     futures = [
                         executor.submit(
-                            ep_simulation_instance.run_ep_simulation,
+                            EpSimulationInstance.run_coupled_simulation_from_ep_instance,
+                            path_ep_instance_pkl = self._building_id_to_path_pkl_dict[building_id],
                             shared_memory_name=shm.name,
                             shared_memory_array_size=shared_memory_array_size,
                             shared_memory_lock=shared_memory_lock,
@@ -487,7 +486,7 @@ class EpLwrSimulationManager:
                             path_epw=self._path_epw,
                             path_energyplus_dir=self._path_energyplus_dir
                         )
-                        for ep_simulation_instance in self._ep_simulation_instance_dict.values()
+                        for building_id in self._building_id_list
                     ]
                     # Wait for all processes to complete
                     for future in futures:

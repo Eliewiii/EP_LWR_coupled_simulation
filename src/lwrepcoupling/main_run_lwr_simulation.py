@@ -22,6 +22,7 @@ def main(path_pkl_file):
     if ep_lwr_sim_man.num_building < 2:
         raise Exception("Not enough buildings in the simulation manager")
     #
+
     ep_lwr_sim_man.run_lwr_simulation()
 
 

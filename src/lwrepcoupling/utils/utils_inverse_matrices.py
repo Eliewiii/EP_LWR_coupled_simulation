@@ -114,6 +114,7 @@ def compute_full_inverse_via_gmres_parallel(mtx, tol: float = 1e-5, maxiter: int
         M_inv = diags(1 / mtx.diagonal())
 
     # Use ProcessPoolExecutor for parallel execution
+    num_workers = num_workers or None  # Use all available CPU cores if num_workers is 0
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         results = list(
             executor.map(solve_gmres_for_one_column, [(mtx, i, M_inv, maxiter, rtol) for i in range(n)]))
