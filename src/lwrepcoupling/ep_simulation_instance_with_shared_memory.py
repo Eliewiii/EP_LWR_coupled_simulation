@@ -238,7 +238,7 @@ class EpSimulationInstance:
         :return:
         """
 
-        return (np.power(temperature_p4_vector.T[self.num_outdoor_surfaces] - self._resolution_mtx @ temperature_p4_vector.T, 1 / 4) - 273.15).tolist()
+        return (np.power(temperature_p4_vector.T[self._surface_index_min:self._surface_index_max+1] - self._resolution_mtx @ temperature_p4_vector.T, 1 / 4) - 273.15).tolist()
 
     # -----------------------------------------------------#
     # ----------- EnergyPlus API Preparation --------------#

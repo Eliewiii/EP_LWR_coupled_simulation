@@ -76,9 +76,12 @@ def compute_resolution_matrices(vf_matrix: sp.csr_matrix,
         1 / (total_srd_vf_list[i] * eps_matrix[i, i]) if total_srd_vf_list[i] * eps_matrix[i, i] != 0 else 0
         for i in range(n)]
     inv_f_srd_epsilon = sp.diags(diag_f_srd_epsilon_inv, offsets=0, format="csr")
+    # Get F^{srd,*}
+    f_srd_star = sp.diags([1.-vf_srd for vf_srd in total_srd_vf_list], offsets=0, format="csr")
+
 
     # Final resolution matrix
-    resolution_mtx = inv_f_srd_epsilon@ (id_mtx - vf_matrix + tau_matrix @ vf_matrix) @ inv_f_star_rho @ eps_matrix
+    resolution_mtx = inv_f_srd_epsilon@ ((id_mtx - vf_matrix + tau_matrix @ vf_matrix) @ inv_f_star_rho - f_srd_star )@ eps_matrix
 
     # Check the result is csr
     if not sp.issparse(resolution_mtx):
