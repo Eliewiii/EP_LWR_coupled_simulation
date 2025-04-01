@@ -51,6 +51,9 @@ class EpSimulationInstance:
         self._surface_temp_handler_list = []
         self._surrounding_surface_temperature_schedule_temperature_handler_list = []
 
+        # flags
+        self._warmup_started = False
+
         # LWR data
         self._resolution_mtx = None
 
@@ -315,51 +318,20 @@ class EpSimulationInstance:
                                                           i]) + 273.15)  # convert to Kelvin
         return surface_temperatures_list
 
-    # def write_surface_temperatures_in_file(self, current_time):
-    #     """
-    #
-    #     :return:
-    #     """
-    #     surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
-    #     # write down the surface temperatures in a file with tmp extension to avoid reading it before it is fully written
-    #     with open(os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
-    #               'a') as file:
-    #         file.write(f"{current_time} {surface_temperatures_list}\n")
-    #     # Rename the file to remove the .tmp extension
-    #     os.rename(os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.tmp"),
-    #               os.path.join(self._path_output_dir, f"{current_time}_{self.simulation_index}.txt"))
-
-    # def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock,
-    #                                          synch_point_barrier):
-    #     """
-    #     Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
-    #     :return:
-    #     """
-    #     # Todo implement teh rest of the function with the LWR logic
-    #
-    #     # Get current simulation time (in hours)
-    #     current_time = self._api.exchange.current_sim_time(state)
-    #     # Get the surface temperatures of all the surfaces
-    #     surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces()
-    #     # write down the surface temperatures the shared memory
-    #     with shared_memory_lock:
-    #         # todo: need to indicated properly the start and end index of the shared memory
-    #         # Here we are writing the list as a slice of the shared memory
-    #         shared_array[index:index + len(float_list)] = np.array(
-    #             surface_temperatures_list) ** 4  # directly give the temperatures power 4
-    #         print(f"Process {index} wrote data at index {index}")
-    #
-    #     # wait for the other building to write down its surface temperatures
-    #     synch_point_barrier.wait()
-    #     # can directly use the numpy array to compute the LWR
-    #     # update the surrounding surface temperature schedules with the proper "mean radiant temperature" values
-    #
-    #     # Delete the file with the surface temperatures
-    #     # os.remove(os.path.join(self._path_output_dir,f"{current_time}_{self.simulation_index}.txt"))
 
     # -----------------------------------------------------#
     # ------------ Main Callback Function -----------------#
     # -----------------------------------------------------#
+
+    # def all_instances_synch_for_warmup(self,shared_array_timestep,sim_dt):
+    #     """
+    #
+    #     :param shared_array_timestep:
+    #     :param sim_dt:
+    #     :return:
+    #     """
+    #     def is_identical_or_first_time_step()
+    #     if
 
     def coupled_simulation_callback_function(self, state, shared_array,shared_array_timestep, shared_memory_lock,
                                              synch_point_barrier):
@@ -373,12 +345,22 @@ class EpSimulationInstance:
         # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
         if not self._schedule_actuator_handle_list:
             return
+        current_time = self._api.exchange.current_sim_time(state)
+
+        if not self._warmup_started:
+            self._warmup_started = True
+            return
+        if not self._warmup_done:
+            if current_time == 0.15:
+                self._warmup_done = True
+            else:
+                return
 
         # current_time = api.exchange.current_sim_time(state)
 
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
-        current_time = self._api.exchange.current_sim_time(state)
+
 
         # write down the surface temperatures the shared memory
         with shared_memory_lock:
@@ -390,7 +372,9 @@ class EpSimulationInstance:
             np.copyto(shared_array_timestep[self._simulation_index:self._simulation_index+1],
                       np.array([current_time]))
 
+
         synch_point_barrier.wait()
+
         if self._simulation_index == 0:
             print(shared_array_timestep)
         # Compute a somewhat mean surface temperature, to test the synchronization, only one surface per building will be used
@@ -401,54 +385,6 @@ class EpSimulationInstance:
             self._api.exchange.set_actuator_value(state,
                                                   self._schedule_actuator_handle_list[i], srd_mrt)
 
-    def coupled_simulation_callback_function_test(self, state, shared_array, shared_memory_lock,
-                                                  synch_point_barrier):
-        """
-        Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
-        This function is a test version that will not perform the LWR computation but will write the surface temperatures and update the schedules
-        to test the synchronization of the shared memory and the barrier.
-        :return:
-        """
-        # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
-        if self._schedule_actuator_handle_list == []:
-            return
-
-        # Need to make sure all the simulation are at the same time step, as EnergyPlus might adjust the time step if needed.
-        # Need to check the timee step and make the simulation wait if needed with a second shared memory and barrier
-        # Could be overcomed by using a smaller time step, but it needs to be tested
-
-        # Get the surface temperatures of all the surfaces
-        surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
-
-        # write down the surface temperatures the shared memory
-        with shared_memory_lock:
-            # todo: need to indicated properly the start and end index of the shared memory
-            # Here we are writing the list as a slice of the shared memory
-            shared_array[self._surface_index_min:self._surface_index_max + 1] = np.array(
-                # +1 to include the last index
-                surface_temperatures_list) ** 4  # directly give the temperatures power 4
-
-        # wait for the other building to write down its surface temperatures
-        synch_point_barrier.wait()
-        # Compute a somewhat mean surface temperature, to test the synchronization, only one surface per building will be used
-        mean_surface_temperature = np.mean(shared_array ** (1 / 4)) - 273.15  # convert back to Celsius
-        # Set the surrounding surface temperature to the average of the surface temperatures
-        for i, surface_name in enumerate(self._outdoor_surface_name_list):
-            self._api.exchange.set_actuator_value(state,
-                                                  self._schedule_actuator_handle_list[
-                                                      i], mean_surface_temperature)
-            # get the current value of the schedule
-            current_value = self._api.exchange.get_variable_value(state,
-                                                                  self._surrounding_surface_temperature_schedule_temperature_handler_list[
-                                                                      i])
-            # assert current_value == mean_surface_temperature, f"Error: the schedule value is not properly set, current value = {current_value}, expected value = {mean_surface_temperature}"
-
-        # -- For testing --#
-        # Get current simulation time (in hours)
-        self._test_current_time_list.append(self._api.exchange.current_sim_time(state))
-        self._test_temperature_list.append(deepcopy(np.array(surface_temperatures_list) - 273.15))
-        self._test_surrounding_surface_temperature_list.append(mean_surface_temperature)
-        # -----------------#
 
     # -----------------------------------------------------#
     # ------------ Run Simulation Function ----------------#
