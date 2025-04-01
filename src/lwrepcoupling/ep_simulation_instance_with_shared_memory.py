@@ -376,10 +376,6 @@ class EpSimulationInstance:
 
         # current_time = api.exchange.current_sim_time(state)
 
-        # todo Need to make sure all the simulation are at the same time step, as EnergyPlus might adjust the time step if needed.
-        # todo Need to check the timee step and make the simulation wait if needed with a second shared memory and barrier
-        # Could be overcomed by using a smaller time step, but it needs to be tested
-
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
         current_time = self._api.exchange.current_sim_time(state)
@@ -394,7 +390,6 @@ class EpSimulationInstance:
             np.copyto(shared_array_timestep[self._simulation_index:self._simulation_index+1],
                       np.array([current_time]))
 
-        # wait for the other building to write down its surface temperatures
         synch_point_barrier.wait()
         if self._simulation_index == 0:
             print(shared_array_timestep)
