@@ -460,6 +460,8 @@ class EpSimulationInstance:
         self._api.runtime.callback_end_zone_timestep_after_zone_reporting(self._state,
                                                                           simulation_callback_function)
 
+        synch_point_barrier.wait()
+
         # Run the EnergyPlus simulation
         self._api.runtime.run_energyplus(
             self._state,
