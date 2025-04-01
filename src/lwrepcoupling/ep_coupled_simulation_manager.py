@@ -469,6 +469,9 @@ class EpLwrSimulationManager:
             shm = shared_memory.SharedMemory(create=True,
                                              size=shared_memory_array_size * np.float64().itemsize)
 
+            shm_timestep = shared_memory.SharedMemory(create=True,
+                                             size=self.num_building * np.float64().itemsize)
+
             # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
             results_list = []
             try:
@@ -480,7 +483,9 @@ class EpLwrSimulationManager:
                             EpSimulationInstance.run_coupled_simulation_from_ep_instance,
                             path_ep_instance_pkl = self._building_id_to_path_pkl_dict[building_id],
                             shared_memory_name=shm.name,
+                            shared_memory_timestep_name = shm_timestep.name,
                             shared_memory_array_size=shared_memory_array_size,
+                            num_building = self.num_building,
                             shared_memory_lock=shared_memory_lock,
                             synch_point_barrier=synch_point_barrier,
                             path_epw=self._path_epw,

@@ -238,7 +238,9 @@ class EpSimulationInstance:
         :return:
         """
 
-        return (np.power(temperature_p4_vector.T[self._surface_index_min:self._surface_index_max+1] - self._resolution_mtx @ temperature_p4_vector.T, 1 / 4) - 273.15).tolist()
+        return (np.power(temperature_p4_vector.T[
+                         self._surface_index_min:self._surface_index_max + 1] - self._resolution_mtx @ temperature_p4_vector.T,
+                         1 / 4) - 273.15).tolist()
 
     # -----------------------------------------------------#
     # ----------- EnergyPlus API Preparation --------------#
@@ -359,7 +361,7 @@ class EpSimulationInstance:
     # ------------ Main Callback Function -----------------#
     # -----------------------------------------------------#
 
-    def coupled_simulation_callback_function(self, state, shared_array, shared_memory_lock,
+    def coupled_simulation_callback_function(self, state, shared_array,shared_array_timestep, shared_memory_lock,
                                              synch_point_barrier):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
@@ -380,6 +382,7 @@ class EpSimulationInstance:
 
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
+        current_time = self._api.exchange.current_sim_time(state)
 
         # write down the surface temperatures the shared memory
         with shared_memory_lock:
@@ -388,8 +391,13 @@ class EpSimulationInstance:
             np.copyto(shared_array[self._surface_index_min:self._surface_index_max + 1],
                       np.array(surface_temperatures_list) ** 4)  # directly give the temperatures power 4
 
+            np.copyto(shared_array_timestep[self._simulation_index],
+                      current_time)
+
         # wait for the other building to write down its surface temperatures
         synch_point_barrier.wait()
+        if self._simulation_index == 0:
+            print(shared_array_timestep)
         # Compute a somewhat mean surface temperature, to test the synchronization, only one surface per building will be used
         list_srd_mean_radiant_temperature_in_c = self.compute_srd_mean_radiant_temperatures_in_c(
             temperature_p4_vector=shared_array)  # convert back to Celsius
@@ -465,14 +473,17 @@ class EpSimulationInstance:
         # Run the simulation
         ep_sim_inst_obj.run_ep_simulation(**kwargs)
 
-    def run_ep_simulation(self, shared_memory_name: str, shared_memory_array_size: int, shared_memory_lock,
-                          synch_point_barrier, path_epw: str, path_energyplus_dir: str):
+    def run_ep_simulation(self, shared_memory_name: str, shared_memory_timestep_name: str,
+                          shared_memory_array_size: int, shared_memory_lock,
+                          synch_point_barrier, num_building:int, path_epw: str, path_energyplus_dir: str):
         """
         Run the EnergyPlus simulation with the shared memory and the synchronization objects.
         :param shared_memory_name: str, The name of the shared memory to access the surface temperatures
+        :param shared_memory_timestep_name: str, The name of the shared memory to access the timesteps
         :param shared_memory_array_size: int, The size of the shared memory array
         :param shared_memory_lock: Lock, The lock to limit writing access to the shared memory
         :param synch_point_barrier: Barrier, The barrier to synchronize processes
+        :param num_building: number of buildings simulated
         :param path_epw: str, The path to the EPW file
         :param path_energyplus_dir: str, The path to the EnergyPlus directory
         :return: self: EpSimulationInstance, The instance of the simulation to update the one in the manager
@@ -480,6 +491,9 @@ class EpSimulationInstance:
         # Point to the shared memory for surface temperature access
         shm = shared_memory.SharedMemory(name=shared_memory_name)
         shared_array = np.ndarray(shared_memory_array_size, dtype=np.float64, buffer=shm.buf)
+
+        shm_timestep = shared_memory.SharedMemory(name=shared_memory_timestep_name)
+        shared_array_timestep = np.ndarray(num_building, dtype=np.float64, buffer=shm_timestep.buf)
 
         # initialize the EnergyPlus API and simulation state
         self._api = EnergyPlusAPI(running_as_python_plugin=True, path_to_ep_folder=path_energyplus_dir)
@@ -494,8 +508,8 @@ class EpSimulationInstance:
             Wrapper for the main callback function to pass arguments (which are not allowed in the callback function).
             :param state:
             """
-            return self.coupled_simulation_callback_function(state, shared_array, shared_memory_lock,
-                                                                  synch_point_barrier)
+            return self.coupled_simulation_callback_function(state, shared_array, shared_array_timestep,
+                                                             shared_memory_lock, synch_point_barrier)
 
         # Set the callback functions to run at the various moment of the simulation
         self._api.runtime.callback_begin_new_environment(self._state,
