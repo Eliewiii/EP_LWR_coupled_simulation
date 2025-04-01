@@ -53,6 +53,7 @@ class EpSimulationInstance:
 
         # flags
         self._warmup_started = False
+        self._warmup_done = False
 
         # LWR data
         self._resolution_mtx = None
