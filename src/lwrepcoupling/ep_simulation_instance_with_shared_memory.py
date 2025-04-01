@@ -392,7 +392,7 @@ class EpSimulationInstance:
                       np.array(surface_temperatures_list) ** 4)  # directly give the temperatures power 4
 
             np.copyto(shared_array_timestep[self._simulation_index],
-                      current_time)
+                      np.array([current_time]))
 
         # wait for the other building to write down its surface temperatures
         synch_point_barrier.wait()
