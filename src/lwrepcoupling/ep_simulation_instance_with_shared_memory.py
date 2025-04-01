@@ -361,7 +361,7 @@ class EpSimulationInstance:
             self._warmup_started = True
             return
         if not self._warmup_done:
-            if current_time == 0.15:
+            if np.isclose(current_time, 0.15, rtol=1e-05, atol=1e-05):
                 self._warmup_done = True
             else:
                 return
