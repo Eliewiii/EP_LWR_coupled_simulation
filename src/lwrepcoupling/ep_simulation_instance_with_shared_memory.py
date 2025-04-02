@@ -355,7 +355,11 @@ class EpSimulationInstance:
             if np.isclose(current_time, 0.15, rtol=1e-05, atol=1e-05):
                 self._warmup_done = True
             else:
-                return
+                with warmup_condition:
+                    if all_done:
+                        warmup_condition.notify_all()  # The last process notifies everyone
+                    else:
+                        warmup_condition.wait()  # Wait for the last process
 
         # current_time = api.exchange.current_sim_time(state)
 
