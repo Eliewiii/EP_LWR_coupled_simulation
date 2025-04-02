@@ -348,15 +348,6 @@ class EpSimulationInstance:
             return
         current_time = self._api.exchange.current_sim_time(state)
 
-        # write down the surface temperatures the shared memory
-        with shared_memory_lock:
-
-            np.copyto(shared_array_timestep[self._simulation_index:self._simulation_index + 1],
-                      np.array([current_time]))
-
-        if self._simulation_index == 0:
-            print(shared_array_timestep)
-
         if not self._warmup_started:
             self._warmup_started = True
             return
@@ -371,6 +362,7 @@ class EpSimulationInstance:
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
 
+        synch_point_barrier.wait()
 
         # write down the surface temperatures the shared memory
         with shared_memory_lock:
