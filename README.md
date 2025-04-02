@@ -37,4 +37,5 @@ For any questions, feel free to reach out:
 * Author: Elie MEIDONI
 * Email: elie.medioniwiii@gmail.com
 
-
+## Credits
+A special thank to Ivan Girault for his help verifying the theoretical modeling anf long-wave radiation equation system. 
