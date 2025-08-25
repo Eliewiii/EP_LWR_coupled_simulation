@@ -23,7 +23,7 @@ def main(path_pkl_file):
         raise Exception("Not enough buildings in the simulation manager")
     #
 
-    ep_lwr_sim_man.run_lwr_simulation()
+    ep_lwr_sim_man.run_lwr_coupled_simulation()
 
 
 
