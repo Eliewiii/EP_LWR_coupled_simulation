@@ -6,6 +6,7 @@ managing the handlers etc.
 import os
 import shutil
 import pickle
+import math
 
 import numpy as np
 
@@ -319,7 +320,6 @@ class EpSimulationInstance:
                                                           i]) + 273.15)  # convert to Kelvin
         return surface_temperatures_list
 
-
     # -----------------------------------------------------#
     # ------------ Main Callback Function -----------------#
     # -----------------------------------------------------#
@@ -334,8 +334,9 @@ class EpSimulationInstance:
     #     def is_identical_or_first_time_step()
     #     if
 
-    def coupled_simulation_callback_function(self, state, shared_array,shared_array_timestep, shared_memory_lock,
-                                             synch_point_barrier):
+    def coupled_simulation_callback_function(self, state, shared_array, shared_array_timestep,
+                                             shared_memory_lock,
+                                             synch_point_barrier, time_step: float):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
         This function is a test version that will not perform the LWR computation but will write the surface temperatures and update the schedules
@@ -352,12 +353,10 @@ class EpSimulationInstance:
             self._warmup_started = True
             return
         if not self._warmup_done:
-            if np.isclose(current_time, 0.05, rtol=1e-05, atol=1e-05):
+            if np.isclose(current_time, time_step, rtol=1e-05, atol=1e-05):
                 self._warmup_done = True
             else:
                 return
-
-        # current_time = api.exchange.current_sim_time(state)
 
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
@@ -371,14 +370,29 @@ class EpSimulationInstance:
             np.copyto(shared_array[self._surface_index_min:self._surface_index_max + 1],
                       np.array(surface_temperatures_list) ** 4)  # directly give the temperatures power 4
 
-            np.copyto(shared_array_timestep[self._simulation_index:self._simulation_index+1],
+            np.copyto(shared_array_timestep[self._simulation_index:self._simulation_index + 1],
                       np.array([current_time]))
-
 
         synch_point_barrier.wait()
 
         if self._simulation_index == 0:
-            print(shared_array_timestep)
+            # Compute timestep indices by rounding to nearest integer
+            floor_timestep_indices = [
+                math.floor(round(ts,4) / time_step) for ts in shared_array_timestep
+            ]
+            ceil_timestep_indices = [
+                math.ceil(round(ts,4) / time_step) for ts in shared_array_timestep
+            ]
+            # Check that all indices are the same
+            if max(floor_timestep_indices) - min(floor_timestep_indices) > 1   and max(ceil_timestep_indices) - min(ceil_timestep_indices) > 1:
+                raise ValueError(
+                    f"Timestep mismatch between simulations:\n"
+                    f"timesteps: {shared_array_timestep}\n"
+
+                )
+            if shared_array_timestep[0] % int(24) == 0:
+                print(f"Current day: {int(shared_array_timestep[0] // 24)}")
+
         # Compute a somewhat mean surface temperature, to test the synchronization, only one surface per building will be used
         list_srd_mean_radiant_temperature_in_c = self.compute_srd_mean_radiant_temperatures_in_c(
             temperature_p4_vector=shared_array)  # convert back to Celsius
@@ -386,7 +400,6 @@ class EpSimulationInstance:
         for i, srd_mrt in enumerate(list_srd_mean_radiant_temperature_in_c):
             self._api.exchange.set_actuator_value(state,
                                                   self._schedule_actuator_handle_list[i], srd_mrt)
-
 
     # -----------------------------------------------------#
     # ------------ Run Simulation Function ----------------#
@@ -408,7 +421,8 @@ class EpSimulationInstance:
 
     def run_ep_simulation(self, shared_memory_name: str, shared_memory_timestep_name: str,
                           shared_memory_array_size: int, shared_memory_lock,
-                          synch_point_barrier, num_building:int, path_epw: str, path_energyplus_dir: str):
+                          synch_point_barrier, num_building: int, path_epw: str, path_energyplus_dir: str,
+                          time_step: float):
         """
         Run the EnergyPlus simulation with the shared memory and the synchronization objects.
         :param shared_memory_name: str, The name of the shared memory to access the surface temperatures
@@ -442,7 +456,8 @@ class EpSimulationInstance:
             :param state:
             """
             return self.coupled_simulation_callback_function(state, shared_array, shared_array_timestep,
-                                                             shared_memory_lock, synch_point_barrier)
+                                                             shared_memory_lock, synch_point_barrier,
+                                                             time_step)
 
         # Set the callback functions to run at the various moment of the simulation
         self._api.runtime.callback_begin_new_environment(self._state,

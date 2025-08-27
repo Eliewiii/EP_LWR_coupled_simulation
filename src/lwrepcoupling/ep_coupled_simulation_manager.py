@@ -41,6 +41,7 @@ class EpLwrSimulationManager:
     CONFIG_KEY_PATH_OUT_DIR = "path_output"
     CONFIG_KEY_PATH_EP = "path_folder_EnergyPlus"
     CONFIG_KEY_PATH_EPW = "path_epw"
+    CONFIG_KEY_TIME_STEP = "time_step"
 
     EP_SIM_PARA_DICT_UNIT_DEFAULT = {
         "path_idf": None
@@ -67,6 +68,7 @@ class EpLwrSimulationManager:
         self._path_energyplus_dir = None
         #
         self._num_outdoor_surfaces = 0
+        self._time_step = None
 
     def _set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
         """
@@ -134,6 +136,11 @@ class EpLwrSimulationManager:
     def num_outdoor_surfaces(self):
         return self._num_outdoor_surfaces
 
+    @property
+    def time_step(self):
+        return self._time_step
+
+
     # -----------------------------------------------------#
     # -------------- Export and Import --------------------#
     # -----------------------------------------------------#
@@ -182,6 +189,7 @@ class EpLwrSimulationManager:
                          list_of_list_outdoor_surface_name: List[List[str]],
                          path_vf_mtx_crs_npz: str, path_eps_mtx_crs_npz: str,
                          path_rho_mtx_crs_npz: str, path_tau_mtx_crs_npz: str,
+                         time_step: float,
                          **kwargs) -> str:
         """
 
@@ -196,6 +204,7 @@ class EpLwrSimulationManager:
         :param path_eps_mtx_crs_npz:
         :param path_rho_mtx_crs_npz:
         :param path_tau_mtx_crs_npz:
+        :param time_step:
         :param kwargs:
         :return:
         """
@@ -215,6 +224,7 @@ class EpLwrSimulationManager:
             path_eps_mtx_crs_npz=path_eps_mtx_crs_npz,
             path_rho_mtx_crs_npz=path_rho_mtx_crs_npz,
             path_tau_mtx_crs_npz=path_tau_mtx_crs_npz,
+            time_step=time_step,
             **kwargs
         )
         # Define the path to the output configuration file
@@ -233,6 +243,7 @@ class EpLwrSimulationManager:
                          list_of_list_outdoor_surface_name: List[List[str]],
                          path_vf_mtx_crs_npz: str, path_eps_mtx_crs_npz: str,
                          path_rho_mtx_crs_npz: str, path_tau_mtx_crs_npz: str,
+                        time_step: float,
                          **kwargs) -> str:
         """
         Creates a JSON configuration file for the LWR-EP coupled simulation manager.
@@ -251,6 +262,7 @@ class EpLwrSimulationManager:
         :param path_eps_mtx_crs_npz: Path to the emissivity matrix in compressed sparse format.
         :param path_rho_mtx_crs_npz: Path to the reflectivity matrix in compressed sparse format.
         :param path_tau_mtx_crs_npz: Path to the transmissivity matrix in compressed sparse format.
+        :param time_step: Time step for the simulation in hours
         :param kwargs: Optional parameters for the GMRES-based matrix inversion method.
             - **tol** (float, optional): Overall inverse tolerance (default: 1e-5, valid range: 1e-10 to 1e-2).
             - **maxiter** (int, optional): Maximum number of iterations (default: 150, valid range: 1 to 1000).
@@ -276,6 +288,7 @@ class EpLwrSimulationManager:
             path_eps_mtx_crs_npz="eps_matrix.npz",
             path_rho_mtx_crs_npz="rho_matrix.npz",
             path_tau_mtx_crs_npz="tau_matrix.npz",
+            time_step=20,
             tol=1e-6, maxiter=200  # Optional kwargs
         )
         ```
@@ -312,6 +325,7 @@ class EpLwrSimulationManager:
 
         config_dict[cls.CONFIG_KEY_PATH_EP] = path_energyplus_dir  # Added EnergyPlus directory
         config_dict[cls.CONFIG_KEY_PATH_EPW] = path_epw_file  # Added EPW file path
+        config_dict[cls.CONFIG_KEY_TIME_STEP] = time_step
 
         return config_dict
 
@@ -380,6 +394,7 @@ class EpLwrSimulationManager:
             raise ValueError("The matrix dimensions must match the number of outdoor surfaces.")
 
         sim_manager._num_outdoor_surfaces = config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]
+        sim_manager._time_step = config_dict[cls.CONFIG_KEY_TIME_STEP]
 
         # Compute resolution matrices
         resolution_mtx, total_srd_vf_list = compute_resolution_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
@@ -489,7 +504,8 @@ class EpLwrSimulationManager:
                             shared_memory_lock=shared_memory_lock,
                             synch_point_barrier=synch_point_barrier,
                             path_epw=self._path_epw,
-                            path_energyplus_dir=self._path_energyplus_dir
+                            path_energyplus_dir=self._path_energyplus_dir,
+                            time_step=self._time_step
                         )
                         for building_id in self._building_id_list
                     ]
