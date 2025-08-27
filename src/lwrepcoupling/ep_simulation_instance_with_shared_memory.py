@@ -378,13 +378,14 @@ class EpSimulationInstance:
         if self._simulation_index == 0:
             # Compute timestep indices by rounding to nearest integer
             floor_timestep_indices = [
-                math.floor(round(ts,4) / time_step) for ts in shared_array_timestep
+                math.floor(round(ts, 4) / time_step) for ts in shared_array_timestep
             ]
             ceil_timestep_indices = [
-                math.ceil(round(ts,4) / time_step) for ts in shared_array_timestep
+                math.ceil(round(ts, 4) / time_step) for ts in shared_array_timestep
             ]
             # Check that all indices are the same
-            if max(floor_timestep_indices) - min(floor_timestep_indices) > 1   and max(ceil_timestep_indices) - min(ceil_timestep_indices) > 1:
+            if max(floor_timestep_indices) - min(floor_timestep_indices) > 1 and max(
+                    ceil_timestep_indices) - min(ceil_timestep_indices) > 1:
                 raise ValueError(
                     f"Timestep mismatch between simulations:\n"
                     f"timesteps: {shared_array_timestep}\n"
