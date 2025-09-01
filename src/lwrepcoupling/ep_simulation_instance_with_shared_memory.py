@@ -2,7 +2,7 @@
 Class to represent an instance of a simulation of the EP model, generating the idf additional strings,
 managing the handlers etc.
 """
-
+import logging
 import os
 import shutil
 import pickle
@@ -353,15 +353,15 @@ class EpSimulationInstance:
             self._warmup_started = True
             return
         if not self._warmup_done:
-            if np.isclose(current_time, time_step, rtol=1e-05, atol=1e-05):
+            if np.isclose(current_time, time_step, rtol=1e-01, atol=1e-02) or (2*time_step>current_time > time_step):
                 self._warmup_done = True
             else:
                 return
-
         # Get the surface temperatures of all the surfaces
         surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
 
         synch_point_barrier.wait()
+
 
         # write down the surface temperatures the shared memory
         with shared_memory_lock:
@@ -374,7 +374,6 @@ class EpSimulationInstance:
                       np.array([current_time]))
 
         synch_point_barrier.wait()
-
         if self._simulation_index == 0:
             # Compute timestep indices by rounding to nearest integer
             floor_timestep_indices = [
@@ -461,6 +460,8 @@ class EpSimulationInstance:
                                                              time_step)
 
         # Set the callback functions to run at the various moment of the simulation
+
+        logging.warning(f"Starting EnergyPlus simulation for building {self._identifier}")
         self._api.runtime.callback_begin_new_environment(self._state,
                                                          self.initialize_actuator_handler_callback_function)
         self._api.runtime.callback_begin_new_environment(self._state,
