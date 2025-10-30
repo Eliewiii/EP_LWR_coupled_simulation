@@ -19,7 +19,7 @@ def main(path_pkl_file):
     except Exception as e:
         raise Exception("Error loading the EpLwrSimulationManager object from the pkl file")
     # Check if enuogh buildings are in the simulation manager
-    if ep_lwr_sim_man.num_building < 2:
+    if ep_lwr_sim_man.num_building < 1:
         raise Exception("Not enough buildings in the simulation manager")
     #
 
