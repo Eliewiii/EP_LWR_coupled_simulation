@@ -11,7 +11,7 @@ import subprocess
 
 from scipy.sparse import csr_matrix
 from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import shared_memory, Manager
+from multiprocessing import shared_memory, Manager, Process
 from typing import List
 
 import numpy as np
@@ -463,10 +463,71 @@ class EpLwrSimulationManager:
 
         self.run_lwr_simulation_in_subprocess_from_pkl(path_pkl_file=path_pkl_file)
 
+    # def run_lwr_coupled_simulation(self):
+    #     """
+    #     Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
+    #     :return:
+    #     """
+    #
+    #     # To do: Make sure it's the proper size
+    #     shared_memory_array_size = self.num_outdoor_surfaces
+    #
+    #     # Run the simulation under a Manager context to share memory, locks, and barriers
+    #     with Manager() as manager:
+    #
+    #         # Initialize a lock to limit writing access to shared memory
+    #         shared_memory_lock = manager.Lock()  # Todo: Check if it's necessary as no overlapping writing is done
+    #         # Initialize a barrier to synchronize processes, when called with .wait() all processes will wait until all
+    #         # processes have reached the barrier
+    #         synch_point_barrier = manager.Barrier(self.num_building)
+    #         # Create shared memory for float64 data (enough for all processes' lists)
+    #         shm = shared_memory.SharedMemory(create=True,
+    #                                          size=shared_memory_array_size * np.float64().itemsize)
+    #
+    #         shm_timestep = shared_memory.SharedMemory(create=True,
+    #                                          size=self.num_building * np.float64().itemsize)
+    #
+    #         # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
+    #         results_list = []
+    #         try:
+    #             num_workers = self.num_building  # One process per building, as they should all be run in parallel
+    #             # Start tasks
+    #             with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    #                 futures = [
+    #                     executor.submit(
+    #                         EpSimulationInstance.run_coupled_simulation_from_ep_instance,
+    #                         path_ep_instance_pkl = self._building_id_to_path_pkl_dict[building_id],
+    #                         shared_memory_name=shm.name,
+    #                         shared_memory_timestep_name = shm_timestep.name,
+    #                         shared_memory_array_size=shared_memory_array_size,
+    #                         num_building = self.num_building,
+    #                         shared_memory_lock=shared_memory_lock,
+    #                         synch_point_barrier=synch_point_barrier,
+    #                         path_epw=self._path_epw,
+    #                         path_energyplus_dir=self._path_energyplus_dir,
+    #                         time_step=self._time_step
+    #                     )
+    #                     for building_id in self._building_id_list
+    #                 ]
+    #                 # Wait for all processes to complete
+    #                 for future in futures:
+    #                     try:
+    #                         results_list.append(future.result())
+    #                     except Exception as e:
+    #                         print(f"Task generated an exception: {e}")
+    #
+    #
+    #         finally:
+    #             # Cleanup
+    #             shm.close()
+    #             shm.unlink()
+    #
+    #     return results_list
+
     def run_lwr_coupled_simulation(self):
         """
-        Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
-        :return:
+        Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings.
+        Bypasses Windows 61-handle limit by using manual Processes.
         """
 
         # To do: Make sure it's the proper size
@@ -475,51 +536,50 @@ class EpLwrSimulationManager:
         # Run the simulation under a Manager context to share memory, locks, and barriers
         with Manager() as manager:
 
-            # Initialize a lock to limit writing access to shared memory
-            shared_memory_lock = manager.Lock()  # Todo: Check if it's necessary as no overlapping writing is done
-            # Initialize a barrier to synchronize processes, when called with .wait() all processes will wait until all
-            # processes have reached the barrier
+            # Initialize a lock (Optional: only needed if multiple buildings write to exact same index)
+            shared_memory_lock = manager.Lock()
+
+            # Initialize Barrier
+            # Note: We use the manager's barrier to ensure it works across manual processes
             synch_point_barrier = manager.Barrier(self.num_building)
-            # Create shared memory for float64 data (enough for all processes' lists)
-            shm = shared_memory.SharedMemory(create=True,
-                                             size=shared_memory_array_size * np.float64().itemsize)
 
-            shm_timestep = shared_memory.SharedMemory(create=True,
-                                             size=self.num_building * np.float64().itemsize)
+            # Create shared memory blocks
+            shm = shared_memory.SharedMemory(create=True, size=shared_memory_array_size * np.float64().itemsize)
+            shm_timestep = shared_memory.SharedMemory(create=True, size=self.num_building * np.float64().itemsize)
 
-            # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
-            results_list = []
+            processes = []
+
             try:
-                num_workers = self.num_building  # One process per building, as they should all be run in parallel
-                # Start tasks
-                with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                    futures = [
-                        executor.submit(
-                            EpSimulationInstance.run_coupled_simulation_from_ep_instance,
-                            path_ep_instance_pkl = self._building_id_to_path_pkl_dict[building_id],
-                            shared_memory_name=shm.name,
-                            shared_memory_timestep_name = shm_timestep.name,
-                            shared_memory_array_size=shared_memory_array_size,
-                            num_building = self.num_building,
-                            shared_memory_lock=shared_memory_lock,
-                            synch_point_barrier=synch_point_barrier,
-                            path_epw=self._path_epw,
-                            path_energyplus_dir=self._path_energyplus_dir,
-                            time_step=self._time_step
-                        )
-                        for building_id in self._building_id_list
-                    ]
-                    # Wait for all processes to complete
-                    for future in futures:
-                        try:
-                            results_list.append(future.result())
-                        except Exception as e:
-                            print(f"Task generated an exception: {e}")
+                print(f"Launching {self.num_building} processes...")
 
+                # --- 1. Create and Start Processes Manually ---
+                for building_id in self._building_id_list:
+                    p = Process(
+                        target=EpSimulationInstance.run_coupled_simulation_from_ep_instance,
+                        kwargs={
+                            'path_ep_instance_pkl': self._building_id_to_path_pkl_dict[building_id],
+                            'shared_memory_name': shm.name,
+                            'shared_memory_timestep_name': shm_timestep.name,
+                            'shared_memory_array_size': shared_memory_array_size,
+                            'num_building': self.num_building,
+                            'shared_memory_lock': shared_memory_lock,
+                            'synch_point_barrier': synch_point_barrier,
+                            'path_epw': self._path_epw,
+                            'path_energyplus_dir': self._path_energyplus_dir,
+                            'time_step': self._time_step
+                        }
+                    )
+                    processes.append(p)
+                    p.start()
+
+                # --- 2. Wait for completion (Bypasses Limit) ---
+                # Joining one by one avoids the WaitForMultipleObjects crash on Windows
+                for p in processes:
+                    p.join()
 
             finally:
-                # Cleanup
+                # Cleanup Shared Memory
                 shm.close()
                 shm.unlink()
-
-        return results_list
+                shm_timestep.close()
+                shm_timestep.unlink()
