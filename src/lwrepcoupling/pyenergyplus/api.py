@@ -53,14 +53,15 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-from ctypes import cdll, c_char_p, c_void_p
 import os
 import sys
+from ctypes import c_char_p, c_void_p, cdll
 
-from .func import Functional
 from .datatransfer import DataExchange
+from .func import Functional
 from .runtime import Runtime
 from .state import StateManager
+
 # from pyenergyplus.autosizing import Autosizing
 
 
@@ -72,17 +73,21 @@ def api_path(path_to_ep_folder=None) -> str:
 
     :return: A string absolute path to the EnergyPlus DLL.
     """
+
+    """
+    Function adusted by Elie Medioni to set the EnergyPlus folder and thus use the API as a standalone library.
+    """
     if path_to_ep_folder:
         api_dll_dir = os.path.join(path_to_ep_folder)
     else:
         this_script_dir = os.path.dirname(os.path.realpath(__file__))
         api_dll_dir = os.path.dirname(os.path.normpath(this_script_dir))
-    if sys.platform.startswith('linux'):
-        return os.path.join(api_dll_dir, 'libenergyplusapi.so')
-    elif sys.platform.startswith('darwin'):
-        return os.path.join(api_dll_dir, 'libenergyplusapi.dylib')
+    if sys.platform.startswith("linux"):
+        return os.path.join(api_dll_dir, "libenergyplusapi.so")
+    elif sys.platform.startswith("darwin"):
+        return os.path.join(api_dll_dir, "libenergyplusapi.dylib")
     else:  # assume Windows
-        return os.path.join(api_dll_dir, 'EnergyPlusAPI.dll')
+        return os.path.join(api_dll_dir, "EnergyPlusAPI.dll")
 
 
 class EnergyPlusAPI:
@@ -117,7 +122,7 @@ class EnergyPlusAPI:
     the `from pyenergyplus` import statements can find a pyenergyplus package inside that third-party directory.
     """
 
-    def __init__(self, running_as_python_plugin: bool = False,path_to_ep_folder=None):
+    def __init__(self, running_as_python_plugin: bool = False, path_to_ep_folder=None):
         """
         Create a new API instance with child API classes set up as members on this class.
 
@@ -125,6 +130,10 @@ class EnergyPlusAPI:
                                          Instantiate the plugin "global" variable methods which are meaningless in
                                          other API calling structures, and 2) Avoid re-instantiating the functional API
                                          as this is already instantiated for Plugin workflows.
+        """
+
+        """
+        Function adusted by Elie Medioni to set the EnergyPlus folder and thus use the API as a standalone library.
         """
         self.api = cdll.LoadLibrary(api_path(path_to_ep_folder))
         self.api.apiVersionFromEPlus.argtypes = [c_void_p]
@@ -155,6 +164,7 @@ class EnergyPlusAPI:
         api_version_from_ep = float(self.api.apiVersionFromEPlus(state))
         api_version_defined_here = float(self.api_version())
         if api_version_defined_here != api_version_from_ep:
-            raise Exception("API version does not match, this API version: %s; E+ is expecting version: %s" % (
-                api_version_defined_here, api_version_from_ep
-            ))
+            raise Exception(
+                "API version does not match, this API version: %s; E+ is expecting version: %s"
+                % (api_version_defined_here, api_version_from_ep)
+            )
