@@ -28,6 +28,7 @@ addopts = "-v --tb=short"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["src/lwrepcoupling/pyenergyplus/"]
 
 [tool.ruff.lint]
 # E: Error, F: Pyflakes, B: Bugbear
