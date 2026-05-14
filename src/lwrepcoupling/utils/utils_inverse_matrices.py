@@ -2,15 +2,21 @@
 Functions for matrix inversion
 """
 
-import numpy as np
-
 from concurrent.futures import ProcessPoolExecutor
+from typing import Any
 
-from scipy.sparse.linalg import gmres
+import numpy as np
 from scipy.sparse import csr_matrix, diags
+from scipy.sparse.linalg import gmres
 
 
-def compute_full_inverse_via_gmres(mtx, tol=1e-5, maxiter=100, rtol=1e-5, precondition=False):
+def compute_full_inverse_via_gmres(
+    mtx: Any,
+    tol: float = 1e-5,
+    maxiter: int = 100,
+    rtol: float = 1e-5,
+    precondition: bool = False,
+):
     """
     Approximates the inverse of a sparse matrix mtx using the GMRES method for all columns,
     with optional preconditioning to improve convergence, while keeping the result sparse.
@@ -26,6 +32,10 @@ def compute_full_inverse_via_gmres(mtx, tol=1e-5, maxiter=100, rtol=1e-5, precon
         float: Frobenius norm of the error between A * inverse_approx and identity matrix.
     """
     # Get the size of the matrix (assuming it's square)
+    if mtx is None:
+        raise ValueError("Input matrix cannot be None")
+    if mtx.shape[0] != mtx.shape[1]:
+        raise ValueError("Matrix must be square for inversion.")
     n = mtx.shape[0]
 
     # Create an empty sparse matrix to store the result (approximate inverse)
@@ -60,8 +70,9 @@ def compute_full_inverse_via_gmres(mtx, tol=1e-5, maxiter=100, rtol=1e-5, precon
 
     # Compute the Frobenius norm of the error: ||A * inverse_approx - I||
     error_matrix = identity_approx - csr_matrix(np.eye(n))
-    error_norm = np.linalg.norm(error_matrix.toarray(),
-                                'fro')  # Convert sparse result to dense for error calculation
+    error_norm = np.linalg.norm(
+        error_matrix.toarray(), "fro"
+    )  # Convert sparse result to dense for error calculation
 
     # Check if the error is below the tolerance
     if error_norm < tol:
@@ -70,7 +81,6 @@ def compute_full_inverse_via_gmres(mtx, tol=1e-5, maxiter=100, rtol=1e-5, precon
         print(f"Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
 
     return inverse_approx, error_norm
-
 
 
 def solve_gmres_for_one_column(args):
@@ -87,9 +97,14 @@ def solve_gmres_for_one_column(args):
     return i, x  # Return column index and result to maintain order
 
 
-
-def compute_full_inverse_via_gmres_parallel(mtx, tol: float = 1e-5, maxiter: int = 150, rtol: float = 5e-7,
-                                            precondition: bool = False, num_workers: int = 0):
+def compute_full_inverse_via_gmres_parallel(
+    mtx,
+    tol: float = 1e-5,
+    maxiter: int = 150,
+    rtol: float = 5e-7,
+    precondition: bool = False,
+    num_workers: int = 1,
+):
     """
     Approximates the inverse of a sparse matrix mtx using GMRES in parallel for all columns.
 
@@ -114,10 +129,12 @@ def compute_full_inverse_via_gmres_parallel(mtx, tol: float = 1e-5, maxiter: int
         M_inv = diags(1 / mtx.diagonal())
 
     # Use ProcessPoolExecutor for parallel execution
-    num_workers = num_workers or None  # Use all available CPU cores if num_workers is 0
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         results = list(
-            executor.map(solve_gmres_for_one_column, [(mtx, i, M_inv, maxiter, rtol) for i in range(n)]))
+            executor.map(
+                solve_gmres_for_one_column, [(mtx, i, M_inv, maxiter, rtol) for i in range(n)]
+            )
+        )
 
     # Ensure results are sorted in column order (executor.map() preserves order, but just to be safe)
     results.sort(key=lambda x: x[0])
@@ -129,7 +146,7 @@ def compute_full_inverse_via_gmres_parallel(mtx, tol: float = 1e-5, maxiter: int
     # Compute accuracy check
     identity_approx = mtx.dot(inverse_approx)
     error_matrix = identity_approx - csr_matrix(np.eye(n))
-    error_norm = np.linalg.norm(error_matrix.toarray(), 'fro')
+    error_norm = np.linalg.norm(error_matrix.toarray(), "fro")
 
     # todo: maybe stops the resolution if accuracy requirements not met
 
@@ -156,7 +173,7 @@ def check_inversion_parameters(**kwargs) -> dict:
         "maxiter": (int, (10, 1000)),  # Maximum iterations must be [1, 1000]
         "rtol": (float, (1e-10, 1e-5)),  # Relative tolerance in [1e-10, 1e-5]
         "precondition": (bool, None),  # No constraint on boolean values
-        "num_workers": (int, (0, 64))  # Parallel workers in [0, 64]
+        "num_workers": (int, (0, 64)),  # Parallel workers in [0, 64]
     }
 
     validated_kwargs = {}
@@ -169,13 +186,15 @@ def check_inversion_parameters(**kwargs) -> dict:
         expected_type, constraints = valid_params[key]
         if not isinstance(value, expected_type):
             raise ValueError(
-                f"Invalid type for '{key}': Expected {expected_type.__name__}, got {type(value).__name__}")
+                f"Invalid type for '{key}': Expected {expected_type.__name__}, got {type(value).__name__}"
+            )
 
         if constraints and isinstance(value, (int, float)):  # Apply constraints if they exist
             min_val, max_val = constraints
             if not (min_val <= value <= max_val):
                 raise ValueError(
-                    f"'{key}' is out of range: Expected between {min_val} and {max_val}, got {value}")
+                    f"'{key}' is out of range: Expected between {min_val} and {max_val}, got {value}"
+                )
 
         validated_kwargs[key] = value  # Add only valid values
 

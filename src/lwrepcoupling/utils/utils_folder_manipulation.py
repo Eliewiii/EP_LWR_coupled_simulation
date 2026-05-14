@@ -4,9 +4,7 @@ Utility functions for folder manipulation.
 
 import os
 import shutil
-
 from pathlib import Path
-
 
 
 def create_dir(path_dir: str, overwrite: bool = False):
@@ -20,6 +18,7 @@ def create_dir(path_dir: str, overwrite: bool = False):
     elif overwrite:
         shutil.rmtree(path_dir)
         os.makedirs(path_dir)
+
 
 def check_file_exist(file_path: str):
     """
@@ -35,9 +34,9 @@ def check_parent_folder_exist(file_path: str):
     Check if the parent folder of a file path exists and raise an error if not.
     :param file_path: str, the path of the file.
     """
-    file_path = Path(file_path)
-    parent_folder_path = file_path.parent
-    if not os.path.exists(parent_folder_path):
+    path = Path(file_path)
+    parent_folder_path = path.parent
+    if not parent_folder_path.exists():
         raise FileNotFoundError(f"Folder not found: {parent_folder_path}")
 
 
