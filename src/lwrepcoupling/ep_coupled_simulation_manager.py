@@ -1,24 +1,25 @@
 """
 Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus among multiple buildings.
 """
+
 import json
 import os
-import shutil
-import logging
 import pickle
-import sys
 import subprocess
-
-from scipy.sparse import csr_matrix
-from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import shared_memory, Manager, Process
+import sys
+from multiprocessing import Manager, Process, shared_memory
 from typing import List
 
 import numpy as np
 
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
-from .utils import read_csr_matrices_from_npz, compute_resolution_matrices, check_matrices, \
-    check_inversion_parameters, create_dir
+from .utils import (
+    check_inversion_parameters,
+    check_matrices,
+    compute_resolution_matrices,
+    create_dir,
+    read_csr_matrices_from_npz,
+)
 
 
 class EpLwrSimulationManager:
@@ -43,9 +44,7 @@ class EpLwrSimulationManager:
     CONFIG_KEY_PATH_EPW = "path_epw"
     CONFIG_KEY_TIME_STEP = "time_step"
 
-    EP_SIM_PARA_DICT_UNIT_DEFAULT = {
-        "path_idf": None
-    }
+    EP_SIM_PARA_DICT_UNIT_DEFAULT = {"path_idf": None}
 
     # -----------------------------------------------------#
     # -------------------- Initialization------------------#
@@ -83,8 +82,10 @@ class EpLwrSimulationManager:
         self._path_epw = path_epw
         # Check if energyplus directory exists
         if not os.path.exists(path_energyplus_dir):
-            raise FileNotFoundError(f"EnergyPlus directory not found at {path_energyplus_dir}.\n"
-                                    f"Check if the path is correct. You might have a different verison of EnergyPlus.")
+            raise FileNotFoundError(
+                f"EnergyPlus directory not found at {path_energyplus_dir}.\n"
+                f"Check if the path is correct. You might have a different verison of EnergyPlus."
+            )
         self._path_energyplus_dir = path_energyplus_dir
         # Check if the output directory exists
         if not os.path.exists(path_output_dir):
@@ -95,7 +96,8 @@ class EpLwrSimulationManager:
             pass
         else:
             raise FileExistsError(
-                f"Output directory already exists at {path_output_dir} and is not empty. Please empty it or choose another directory.")
+                f"Output directory already exists at {path_output_dir} and is not empty. Please empty it or choose another directory."
+            )
         self._path_output_dir = path_output_dir
 
     def _add_building_to_dict(self, building_id: str, path_to_pkl: str):
@@ -140,13 +142,11 @@ class EpLwrSimulationManager:
     def time_step(self):
         return self._time_step
 
-
     # -----------------------------------------------------#
     # -------------- Export and Import --------------------#
     # -----------------------------------------------------#
 
-    def to_pkl(self, path_folder: str, file_name: str = None,
-               get_path_only: bool = False) -> str:
+    def to_pkl(self, path_folder: str, file_name: str = None, get_path_only: bool = False) -> str:
         """
         Save the instance to a pickle file.
         :param path_folder: str, the folder path where the pickle file will be saved.
@@ -155,10 +155,10 @@ class EpLwrSimulationManager:
         pickle file and return the path.
         """
         if file_name is None:
-            file_name = f"ep_lwr_simulation_manager.pkl"
+            file_name = "ep_lwr_simulation_manager.pkl"
         path_pkl_file = os.path.join(path_folder, file_name)
         if not get_path_only:
-            with open(path_pkl_file, 'wb') as f:
+            with open(path_pkl_file, "wb") as f:
                 pickle.dump(self, f)
         return path_pkl_file
 
@@ -171,7 +171,7 @@ class EpLwrSimulationManager:
         """
         if not os.path.isfile(path_pkl_file):
             raise FileNotFoundError(f"File not found: {path_pkl_file}")
-        with open(path_pkl_file, 'rb') as f:
+        with open(path_pkl_file, "rb") as f:
             ep_simulation_instance = pickle.load(f)
         if not isinstance(ep_simulation_instance, cls):
             raise TypeError(f"Expected {cls}, but got {type(ep_simulation_instance)}")
@@ -183,14 +183,22 @@ class EpLwrSimulationManager:
     # -----------------------------------------------------#
 
     @classmethod
-    def make_config_file(cls, path_dir_config: str, path_dir_outputs: str,
-                         path_epw_file: str, path_energyplus_dir: str,
-                         list_building_id: List[str], list_path_idf_file: List[str],
-                         list_of_list_outdoor_surface_name: List[List[str]],
-                         path_vf_mtx_crs_npz: str, path_eps_mtx_crs_npz: str,
-                         path_rho_mtx_crs_npz: str, path_tau_mtx_crs_npz: str,
-                         time_step: float,
-                         **kwargs) -> str:
+    def make_config_file(
+        cls,
+        path_dir_config: str,
+        path_dir_outputs: str,
+        path_epw_file: str,
+        path_energyplus_dir: str,
+        list_building_id: List[str],
+        list_path_idf_file: List[str],
+        list_of_list_outdoor_surface_name: List[List[str]],
+        path_vf_mtx_crs_npz: str,
+        path_eps_mtx_crs_npz: str,
+        path_rho_mtx_crs_npz: str,
+        path_tau_mtx_crs_npz: str,
+        time_step: float,
+        **kwargs,
+    ) -> str:
         """
 
         :param path_dir_config:
@@ -211,7 +219,9 @@ class EpLwrSimulationManager:
 
         # Ensure the configuration directory exists
         if not os.path.exists(path_dir_config):
-            raise FileNotFoundError(f"The configuration directory '{path_dir_config}' does not exist.")
+            raise FileNotFoundError(
+                f"The configuration directory '{path_dir_config}' does not exist."
+            )
         # Generate the dictionary
         config_dict = cls.make_config_dict(
             path_dir_outputs=path_dir_outputs,
@@ -225,26 +235,33 @@ class EpLwrSimulationManager:
             path_rho_mtx_crs_npz=path_rho_mtx_crs_npz,
             path_tau_mtx_crs_npz=path_tau_mtx_crs_npz,
             time_step=time_step,
-            **kwargs
+            **kwargs,
         )
         # Define the path to the output configuration file
         path_config_file = os.path.join(path_dir_config, cls.CONFIG_FILE_NAME)
 
         # Save the configuration dictionary as a JSON file
-        with open(path_config_file, 'w') as f:
+        with open(path_config_file, "w") as f:
             json.dump(config_dict, f, indent=4)
 
         return path_config_file
 
     @classmethod
-    def make_config_dict(cls, path_dir_outputs: str,
-                         path_epw_file: str, path_energyplus_dir: str,
-                         list_building_id: List[str], list_path_idf_file: List[str],
-                         list_of_list_outdoor_surface_name: List[List[str]],
-                         path_vf_mtx_crs_npz: str, path_eps_mtx_crs_npz: str,
-                         path_rho_mtx_crs_npz: str, path_tau_mtx_crs_npz: str,
-                        time_step: float,
-                         **kwargs) -> str:
+    def make_config_dict(
+        cls,
+        path_dir_outputs: str,
+        path_epw_file: str,
+        path_energyplus_dir: str,
+        list_building_id: List[str],
+        list_path_idf_file: List[str],
+        list_of_list_outdoor_surface_name: List[List[str]],
+        path_vf_mtx_crs_npz: str,
+        path_eps_mtx_crs_npz: str,
+        path_rho_mtx_crs_npz: str,
+        path_tau_mtx_crs_npz: str,
+        time_step: float,
+        **kwargs,
+    ) -> str:
         """
         Creates a JSON configuration file for the LWR-EP coupled simulation manager.
 
@@ -307,14 +324,16 @@ class EpLwrSimulationManager:
                 cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID: list_outdoor_surface_name,
                 cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING: len(list_outdoor_surface_name),
             }
-            for building_id, path_idf, list_outdoor_surface_name in
-            zip(list_building_id, list_path_idf_file, list_of_list_outdoor_surface_name)
+            for building_id, path_idf, list_outdoor_surface_name in zip(
+                list_building_id, list_path_idf_file, list_of_list_outdoor_surface_name
+            )
         }
 
         # Add global configuration settings
         config_dict[cls.CONFIG_BUILDING_ID_LIST] = list_building_id
         config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES] = sum(
-            len(lst) for lst in list_of_list_outdoor_surface_name)
+            len(lst) for lst in list_of_list_outdoor_surface_name
+        )
         config_dict[cls.CONFIG_KEY_PATH_OUT_DIR] = path_dir_outputs
         # Matrices
         config_dict[cls.CONFIG_KEY_PATH_VF_MTX] = path_vf_mtx_crs_npz
@@ -343,21 +362,27 @@ class EpLwrSimulationManager:
             raise FileNotFoundError(f"The config file {path_config_file} does not exist")
 
         # Load the config file as a dictionary
-        with open(path_config_file, 'r') as f:
+        with open(path_config_file, "r") as f:
             config_dict = json.load(f)
 
         return config_dict
 
     @classmethod
-    def set_up_coupled_lwr_simulation_from_config_file(cls, path_config_file: str, to_pkl: bool = False):
+    def set_up_coupled_lwr_simulation_from_config_file(
+        cls, path_config_file: str, to_pkl: bool = False
+    ):
 
         # Load configuration
         config_dict = cls._load_config_file(path_config_file=path_config_file)
 
-        return cls.set_up_coupled_lwr_simulation_from_config_dict(config_dict=config_dict, to_pkl=to_pkl)
+        return cls.set_up_coupled_lwr_simulation_from_config_dict(
+            config_dict=config_dict, to_pkl=to_pkl
+        )
 
     @classmethod
-    def set_up_coupled_lwr_simulation_from_config_dict(cls, config_dict: dict, to_pkl: bool = False):
+    def set_up_coupled_lwr_simulation_from_config_dict(
+        cls, config_dict: dict, to_pkl: bool = False
+    ):
         """
         Initializes an EpLwrSimulationManager instance from a configuration file.
 
@@ -376,9 +401,11 @@ class EpLwrSimulationManager:
 
         # Initialize the simulation manager
         sim_manager = cls()
-        sim_manager._set_paths_attributes(path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR],
+        sim_manager._set_paths_attributes(
+            path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR],
             path_epw=config_dict[cls.CONFIG_KEY_PATH_EPW],
-            path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP])
+            path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP],
+        )
 
         # Load and validate simulation matrices
         vf_mtx, eps_mtx, rho_mtx, tau_mtx = read_csr_matrices_from_npz(
@@ -397,7 +424,9 @@ class EpLwrSimulationManager:
         sim_manager._time_step = config_dict[cls.CONFIG_KEY_TIME_STEP]
 
         # Compute resolution matrices
-        resolution_mtx, total_srd_vf_list = compute_resolution_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
+        resolution_mtx, total_srd_vf_list = compute_resolution_matrices(
+            vf_mtx, eps_mtx, rho_mtx, tau_mtx
+        )
 
         # Generate EpSimulationInstance for each building
         min_surface_index = 0  # Tracks the portion of the shared temperature vector
@@ -417,11 +446,13 @@ class EpLwrSimulationManager:
                 simulation_index=sim_manager.num_building,
                 path_output_dir=path_sim_dir_building,
                 path_idf=config_dict[building_id][cls.CONFIG_PATH_IDF],
-                outdoor_surface_id_list=config_dict[building_id][cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID],
+                outdoor_surface_id_list=config_dict[building_id][
+                    cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID
+                ],
                 min_surface_index=min_surface_index,
                 max_surface_index=max_surface_index,
-                resolution_mtx=resolution_mtx[min_surface_index:max_surface_index + 1, :],
-                srd_vf_list=total_srd_vf_list[min_surface_index:max_surface_index + 1],
+                resolution_mtx=resolution_mtx[min_surface_index : max_surface_index + 1, :],
+                srd_vf_list=total_srd_vf_list[min_surface_index : max_surface_index + 1],
             )
 
             # Register the building simulation instance in the manager
@@ -434,7 +465,9 @@ class EpLwrSimulationManager:
         if to_pkl:
             sim_manager.to_pkl(path_folder=sim_manager.path_output_dir)
 
-        return sim_manager, sim_manager.to_pkl(path_folder=sim_manager.path_output_dir, get_path_only=True)
+        return sim_manager, sim_manager.to_pkl(
+            path_folder=sim_manager.path_output_dir, get_path_only=True
+        )
 
     # -----------------------------------------------------#
     # -----------------  Run Simulation     ---------------#
@@ -451,8 +484,8 @@ class EpLwrSimulationManager:
             raise FileNotFoundError(f"File not found: {path_pkl_file}")
 
         result = subprocess.run(
-            [sys.executable, '-m', 'lwrepcoupling.main_run_lwr_simulation', path_pkl_file],
-            text=True
+            [sys.executable, "-m", "lwrepcoupling.main_run_lwr_simulation", path_pkl_file],
+            text=True,
         )
 
     def run_lwr_coupled_simulation_in_subprocess(self):
@@ -535,7 +568,6 @@ class EpLwrSimulationManager:
 
         # Run the simulation under a Manager context to share memory, locks, and barriers
         with Manager() as manager:
-
             # Initialize a lock (Optional: only needed if multiple buildings write to exact same index)
             shared_memory_lock = manager.Lock()
 
@@ -544,8 +576,12 @@ class EpLwrSimulationManager:
             synch_point_barrier = manager.Barrier(self.num_building)
 
             # Create shared memory blocks
-            shm = shared_memory.SharedMemory(create=True, size=shared_memory_array_size * np.float64().itemsize)
-            shm_timestep = shared_memory.SharedMemory(create=True, size=self.num_building * np.float64().itemsize)
+            shm = shared_memory.SharedMemory(
+                create=True, size=shared_memory_array_size * np.float64().itemsize
+            )
+            shm_timestep = shared_memory.SharedMemory(
+                create=True, size=self.num_building * np.float64().itemsize
+            )
 
             processes = []
 
@@ -557,17 +593,17 @@ class EpLwrSimulationManager:
                     p = Process(
                         target=EpSimulationInstance.run_coupled_simulation_from_ep_instance,
                         kwargs={
-                            'path_ep_instance_pkl': self._building_id_to_path_pkl_dict[building_id],
-                            'shared_memory_name': shm.name,
-                            'shared_memory_timestep_name': shm_timestep.name,
-                            'shared_memory_array_size': shared_memory_array_size,
-                            'num_building': self.num_building,
-                            'shared_memory_lock': shared_memory_lock,
-                            'synch_point_barrier': synch_point_barrier,
-                            'path_epw': self._path_epw,
-                            'path_energyplus_dir': self._path_energyplus_dir,
-                            'time_step': self._time_step
-                        }
+                            "path_ep_instance_pkl": self._building_id_to_path_pkl_dict[building_id],
+                            "shared_memory_name": shm.name,
+                            "shared_memory_timestep_name": shm_timestep.name,
+                            "shared_memory_array_size": shared_memory_array_size,
+                            "num_building": self.num_building,
+                            "shared_memory_lock": shared_memory_lock,
+                            "synch_point_barrier": synch_point_barrier,
+                            "path_epw": self._path_epw,
+                            "path_energyplus_dir": self._path_energyplus_dir,
+                            "time_step": self._time_step,
+                        },
                     )
                     processes.append(p)
                     p.start()
