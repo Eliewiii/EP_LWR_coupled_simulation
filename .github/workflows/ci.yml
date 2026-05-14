@@ -2,7 +2,7 @@ name: CI - Lint and Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/reoganize_better_practices ]
   pull_request:
     branches: [ main ]
 
