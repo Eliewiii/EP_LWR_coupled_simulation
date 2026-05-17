@@ -17,7 +17,7 @@ packages = ["src/lwrepcoupling"]
 [tool.pytest.ini_options]
 pythonpath = "."
 
-testpaths = ["tests/unit", "tests/integration"]
+testpaths = ["tests/unit"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"

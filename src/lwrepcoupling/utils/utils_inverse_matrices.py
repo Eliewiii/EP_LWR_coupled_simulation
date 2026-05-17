@@ -2,31 +2,59 @@
 Functions for matrix inversion
 """
 
+import logging
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any
+from typing import Annotated, Any
 
 import numpy as np
+from pydantic import BaseModel, Field, field_validator
 from scipy.sparse import csr_matrix, diags
 from scipy.sparse.linalg import gmres
 
+logger = logging.getLogger(__name__)
 
-def compute_full_inverse_via_gmres(
-    mtx: Any,
-    tol: float = 1e-5,
-    maxiter: int = 100,
-    rtol: float = 1e-5,
-    precondition: bool = False,
-):
+
+class InversionConfig(BaseModel):
+    # Boundaries/Constraints
+    tol: Annotated[float, Field(ge=1e-8, le=1e-4)] = 1e-5
+    maxiter: Annotated[int, Field(ge=2, le=1000)] = 150
+    rtol: Annotated[float, Field(ge=1e-10, le=1e-5)] = 5e-7
+    precondition: bool = (
+        False  # Create preconditioner if needed (Jacobi Preconditioner: inverse of diagonal)
+    )
+    strict_tol: bool = False  # If True, will raise an error if the final error norm is above tol
+    num_workers: Annotated[int, Field(ge=0, le=60)] = (
+        1  # Parallel workers (0 means use all available CPUs)
+    )
+
+    # Custom validation
+    @field_validator("num_workers")
+    @classmethod
+    def check_workers(cls, v: int) -> int:
+        # Example: logic that Field can't do alone
+        if v == 0:
+            import os
+
+            return os.cpu_count() or 1
+        return v
+
+
+def compute_full_inverse_via_gmres_parallel(
+    mtx: Any, config: InversionConfig
+) -> tuple[csr_matrix, Any]:
     """
-    Approximates the inverse of a sparse matrix mtx using the GMRES method for all columns,
-    with optional preconditioning to improve convergence, while keeping the result sparse.
+    Approximates the inverse of a sparse matrix mtx using GMRES in parallel for all columns.
 
     Args:
         mtx (csr_matrix): Sparse matrix to be inverted.
-        tol (float): Tolerance for checking accuracy of the approximate inverse.
-        maxiter (int): Maximum number of iterations for GMRES.
-        precondition (bool): Whether to use preconditioning (Jacobi preconditioner).
+        config (InversionConfig): Configuration object containing inversion parameters.
 
+    Returns:
+        csr_matrix: Approximate inverse of the matrix (in CSR format).
+        float: Frobenius norm of the error between A * inverse_approx and identity matrix.
+
+    Raises:
+        ValueError: If the input matrix is None or not square, or if parameters are out of bounds.
     Returns:
         csr_matrix: Approximate inverse of the matrix (in CSR format).
         float: Frobenius norm of the error between A * inverse_approx and identity matrix.
@@ -36,105 +64,30 @@ def compute_full_inverse_via_gmres(
         raise ValueError("Input matrix cannot be None")
     if mtx.shape[0] != mtx.shape[1]:
         raise ValueError("Matrix must be square for inversion.")
-    n = mtx.shape[0]
-
-    # Create an empty sparse matrix to store the result (approximate inverse)
-    inverse_approx = csr_matrix((n, n), dtype=np.float64)
-
-    # Create preconditioner if needed (Jacobi Preconditioner: diagonal inverse)
-    M_inv = None
-    if precondition:
-        # Create a diagonal preconditioner (inverse of the diagonal)
-        M_inv = diags(1 / mtx.diagonal())  # Inverse of the diagonal of A
-
-    # Solve for each column of the identity matrix (i.e., the inverse columns)
-    for i in range(n):
-        # Create the right-hand side as the i-th column of the identity matrix
-        b = np.zeros(n)
-        b[i] = 1  # Identity column
-
-        # Solve mtx * x = b using GMRES (x will be the i-th column of the inverse)
-        x, exitCode = gmres(mtx, b, M=M_inv, maxiter=maxiter, rtol=rtol)
-
-        # If GMRES didn't converge, you may want to handle this case
-        if exitCode != 0:
-            print(f"Warning: GMRES did not converge for column {i}. Exit code: {exitCode}")
-
-        x_sparse = csr_matrix(x.reshape(-1, 1))
-
-        # Store the result (x is the approximation for the i-th column of the inverse)
-        inverse_approx[:, i] = x_sparse  # Store as sparse matrix column
-
-    # Calculate the product A * inverse_approx and compare it to the identity matrix
-    identity_approx = mtx.dot(inverse_approx)
-
-    # Compute the Frobenius norm of the error: ||A * inverse_approx - I||
-    error_matrix = identity_approx - csr_matrix(np.eye(n))
-    error_norm = np.linalg.norm(
-        error_matrix.toarray(), "fro"
-    )  # Convert sparse result to dense for error calculation
-
-    # Check if the error is below the tolerance
-    if error_norm < tol:
-        print(f"Accuracy check passed: Error norm {error_norm:.2e} is below tolerance.")
-    else:
-        print(f"Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
-
-    return inverse_approx, error_norm
-
-
-def solve_gmres_for_one_column(args):
-    """Wrapper function for solving a single column of the inverse matrix."""
-    mtx, i, M_inv, maxiter, rtol = args
-    n = mtx.shape[0]
-    b = np.zeros(n)
-    b[i] = 1  # Create the i-th column of the identity matrix
-    x, exitCode = gmres(mtx, b, M=M_inv, maxiter=maxiter, rtol=rtol)
-
-    if exitCode != 0:
-        print(f"Warning: GMRES did not converge for column {i}. Exit code: {exitCode}")
-
-    return i, x  # Return column index and result to maintain order
-
-
-def compute_full_inverse_via_gmres_parallel(
-    mtx,
-    tol: float = 1e-5,
-    maxiter: int = 150,
-    rtol: float = 5e-7,
-    precondition: bool = False,
-    num_workers: int = 1,
-):
-    """
-    Approximates the inverse of a sparse matrix mtx using GMRES in parallel for all columns.
-
-    Args:
-        mtx (csr_matrix): Sparse matrix to be inverted.
-        tol (float): Tolerance for checking accuracy.
-        maxiter (int): Maximum GMRES iterations.
-        rtol (float): GMRES relative tolerance.
-        precondition (bool): Whether to use preconditioning (Jacobi preconditioner).
-        num_workers (int, optional): Number of parallel processes (default: number of CPU cores).
-
-    Returns:
-        csr_matrix: Approximate inverse of the matrix (in CSR format).
-        float: Frobenius norm of the error between A * inverse_approx and identity matrix.
-    """
-    # Get matrix size (assuming it's square)
-    n = mtx.shape[0]
+    n: int = mtx.shape[0]
 
     # Create preconditioner if needed (Jacobi Preconditioner: inverse of diagonal)
-    M_inv = None
-    if precondition:
+    M_inv = None  # Initialize M_inv to None by default, expected by gmres when no preconditioning is used
+    if config.precondition:
         M_inv = diags(1 / mtx.diagonal())
 
     # Use ProcessPoolExecutor for parallel execution
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    """
+    Note: This approach actually pickels the entire matrix for each worker, which can be inefficient for large matrices.
+    For up to 25000 surfaces no substantial overhead is observed, but for larger matrices this might become a bottleneck.
+    A more efficient approach would involve shared memory or a distributed computing framework, but that adds complexity.
+    """
+    with ProcessPoolExecutor(max_workers=config.num_workers) as executor:
         results = list(
             executor.map(
-                solve_gmres_for_one_column, [(mtx, i, M_inv, maxiter, rtol) for i in range(n)]
+                _solve_gmres_for_one_column,
+                [(mtx, i, M_inv, config.maxiter, config.rtol) for i in range(n)],
             )
         )
+
+    for i, x, exitCode in results:
+        if exitCode != 0:
+            logger.warning(f"Warning: GMRES did not converge for column {i}. Exit code: {exitCode}")
 
     # Ensure results are sorted in column order (executor.map() preserves order, but just to be safe)
     results.sort(key=lambda x: x[0])
@@ -150,12 +103,33 @@ def compute_full_inverse_via_gmres_parallel(
 
     # todo: maybe stops the resolution if accuracy requirements not met
 
-    if error_norm < tol:
-        print(f"Accuracy check passed: Error norm {error_norm:.2e} is below tolerance.")
+    if error_norm < config.tol:
+        logger.info(f"Accuracy check passed: Error norm {error_norm:.2e} is below tolerance.")
+    elif config.strict_tol:
+        raise ValueError(f"Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
     else:
-        print(f"Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
+        logger.warning(f"Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
 
     return inverse_approx, error_norm
+
+
+def _solve_gmres_for_one_column(args) -> tuple[int, np.ndarray, int]:
+    """Wrapper function for solving a single column of the inverse matrix.
+    Args:
+        args: A tuple containing (mtx, i, M_inv, maxiter, rtol)
+            mtx: The matrix to invert
+            i: The column index to solve for
+            M_inv: The preconditioner (or None if not used)
+            maxiter: Maximum iterations for GMRES
+            rtol: Relative tolerance for GMRES
+        Returns:
+            A tuple of (column index, solution vector, GMRES exit code)"""
+    mtx, i, M_inv, maxiter, rtol = args
+    n = mtx.shape[0]
+    b = np.zeros(n)
+    b[i] = 1  # Create the i-th column of the identity matrix
+    x, exitCode = gmres(mtx, b, M=M_inv, maxiter=maxiter, rtol=rtol)
+    return i, x, exitCode  # Return column index and result to maintain order
 
 
 def check_inversion_parameters(**kwargs) -> dict:
@@ -166,6 +140,7 @@ def check_inversion_parameters(**kwargs) -> dict:
     :return: A dictionary with valid inversion parameters (only those explicitly provided).
     :raises ValueError: If an invalid parameter, incorrect type, or out-of-bounds value is provided.
     """
+    # TODO: use pydantic for this validation instead of manual checks
 
     # Define allowed parameters, their expected types, and value constraints (min, max)
     valid_params = {
@@ -199,3 +174,76 @@ def check_inversion_parameters(**kwargs) -> dict:
         validated_kwargs[key] = value  # Add only valid values
 
     return validated_kwargs  # No defaults applied, only validated inputs
+
+
+# def compute_full_inverse_via_gmres(
+#     mtx: Any,
+#     tol: float = 1e-5,
+#     maxiter: int = 100,
+#     rtol: float = 1e-5,
+#     precondition: bool = False,
+# ):
+#     """
+#     Approximates the inverse of a sparse matrix mtx using the GMRES method for all columns,
+#     with optional preconditioning to improve convergence, while keeping the result sparse.
+
+#     Args:
+#         mtx (csr_matrix): Sparse matrix to be inverted.
+#         tol (float): Tolerance for checking accuracy of the approximate inverse.
+#         maxiter (int): Maximum number of iterations for GMRES.
+#         precondition (bool): Whether to use preconditioning (Jacobi preconditioner).
+
+#     Returns:
+#         csr_matrix: Approximate inverse of the matrix (in CSR format).
+#         float: Frobenius norm of the error between A * inverse_approx and identity matrix.
+#     """
+#     # Get the size of the matrix (assuming it's square)
+#     if mtx is None:
+#         raise ValueError("Input matrix cannot be None")
+#     if mtx.shape[0] != mtx.shape[1]:
+#         raise ValueError("Matrix must be square for inversion.")
+#     n = mtx.shape[0]
+
+#     # Create an empty sparse matrix to store the result (approximate inverse)
+#     inverse_approx = csr_matrix((n, n), dtype=np.float64)
+
+#     # Create preconditioner if needed (Jacobi Preconditioner: diagonal inverse)
+#     M_inv = None
+#     if precondition:
+#         # Create a diagonal preconditioner (inverse of the diagonal)
+#         M_inv = diags(1 / mtx.diagonal())  # Inverse of the diagonal of A
+
+#     # Solve for each column of the identity matrix (i.e., the inverse columns)
+#     for i in range(n):
+#         # Create the right-hand side as the i-th column of the identity matrix
+#         b = np.zeros(n)
+#         b[i] = 1  # Identity column
+
+#         # Solve mtx * x = b using GMRES (x will be the i-th column of the inverse)
+#         x, exitCode = gmres(mtx, b, M=M_inv, maxiter=maxiter, rtol=rtol)
+
+#         # If GMRES didn't converge, you may want to handle this case
+#         if exitCode != 0:
+#             print(f"Warning: GMRES did not converge for column {i}. Exit code: {exitCode}")
+
+#         x_sparse = csr_matrix(x.reshape(-1, 1))
+
+#         # Store the result (x is the approximation for the i-th column of the inverse)
+#         inverse_approx[:, i] = x_sparse  # Store as sparse matrix column
+
+#     # Calculate the product A * inverse_approx and compare it to the identity matrix
+#     identity_approx = mtx.dot(inverse_approx)
+
+#     # Compute the Frobenius norm of the error: ||A * inverse_approx - I||
+#     error_matrix = identity_approx - csr_matrix(np.eye(n))
+#     error_norm = np.linalg.norm(
+#         error_matrix.toarray(), "fro"
+#     )  # Convert sparse result to dense for error calculation
+
+#     # Check if the error is below the tolerance
+#     if error_norm < tol:
+#         print(f"Accuracy check passed: Error norm {error_norm:.2e} is below tolerance.")
+#     else:
+#         print(f"Accuracy check failed: Error norm {error_norm:.2e} is above tolerance.")
+
+#     return inverse_approx, error_norm
