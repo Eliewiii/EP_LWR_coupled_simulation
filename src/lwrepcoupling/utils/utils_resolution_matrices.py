@@ -81,13 +81,22 @@ def compute_resolution_matrices(
     tau_matrix: sp.csr_matrix,
     inversion_config: InversionConfig,
 ) -> tuple[sp.csr_matrix, list[float]]:
-    """
+    """Compute the radiation resolution matrices via parallel GMRES inversion.
 
-    :param vf_matrix:
-    :param eps_matrix:
-    :param rho_matrix:
-    :param tau_matrix:
-    :return:
+    Args:
+        vf_matrix: View factor matrix describing surface geometry.
+        eps_matrix: Sparse diagonal emissivity matrix.
+        rho_matrix: Sparse diagonal reflectivity matrix.
+        tau_matrix: Sparse diagonal transmissivity matrix.
+        inversion_config: Solver thresholds and process pool configuration.
+
+    Returns:
+        tuple: (resolution_matrix, total_surrounding_vf_list)
+
+    Raises:
+        ValueError: If a geometric row sum breaks energy conservation bounds,
+                    or if the parallel GMRES solver fails to converge under
+                    a strict tolerance configuration.
     """
     # Size of the matrix
     n = vf_matrix.shape[0]

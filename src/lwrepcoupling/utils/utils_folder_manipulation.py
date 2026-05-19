@@ -38,7 +38,3 @@ def check_parent_folder_exist(file_path: str):
     parent_folder_path = path.parent
     if not parent_folder_path.exists():
         raise FileNotFoundError(f"Folder not found: {parent_folder_path}")
-
-
-if __name__ == "__main__":
-    check_parent_folder_exist(r"../tests/test_generate_input_for_radiance.py")

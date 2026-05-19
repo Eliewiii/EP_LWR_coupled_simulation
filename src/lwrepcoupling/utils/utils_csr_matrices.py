@@ -3,11 +3,12 @@ Functions to read/write crs sparse matrices
 """
 
 from pathlib import Path
+from typing import Any
 
-from scipy.sparse import csr_matrix, load_npz
+from scipy.sparse import csr_matrix, issparse, load_npz
 
 
-def read_csr_matrices_from_npz(*path_csr_matrix_npz_files: str) -> list[csr_matrix]:
+def read_csr_matrices_from_npz(*path_csr_matrix_npz_files: Path) -> list[Any]:
     """Load multiple sparse matrices from a single .npz file.
 
     Args:
@@ -21,12 +22,14 @@ def read_csr_matrices_from_npz(*path_csr_matrix_npz_files: str) -> list[csr_matr
     """
 
     for path_file in path_csr_matrix_npz_files:
-        path_file = Path(path_file)
         if not path_file.exists():
             raise FileNotFoundError(f"The matrix file {path_file} does not exist")
     # Load the matrices
-    mtx_list: list[csr_matrix] = []
+    mtx_list: list[Any] = []
     for path_file in path_csr_matrix_npz_files:
-        mtx_list.append(load_npz(path_file))
+        mtx = load_npz(path_file)
+        if not issparse(mtx):
+            mtx = csr_matrix(mtx)
+        mtx_list.append(mtx)
 
     return mtx_list

@@ -8,9 +8,11 @@ import pickle
 import subprocess
 import sys
 from multiprocessing import Manager, Process, shared_memory
+from pathlib import Path
 from typing import List
 
 import numpy as np
+from pydantic import BaseModel
 
 from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
 from .utils import (
@@ -20,6 +22,25 @@ from .utils import (
     create_dir,
     read_csr_matrices_from_npz,
 )
+
+
+class CompiledBuildingState(BaseModel):
+    building_id: str
+    building_index: int
+    path_idf: Path
+    path_instance_pkl: Path
+    min_surface_index: int
+    max_surface_index: int
+
+
+class SimulationManifest(BaseModel):
+    workspace_dir: Path
+    energyplus_dir: Path
+    epw_file: Path
+    time_step: float
+    num_outdoor_surfaces: int
+
+    compiled_buildings: list[CompiledBuildingState]
 
 
 class EpLwrSimulationManager:
@@ -141,6 +162,26 @@ class EpLwrSimulationManager:
     @property
     def time_step(self):
         return self._time_step
+
+    # @property
+    # def path_output_dir(self) -> Path:
+    #     return self.manifest.workspace_dir
+
+    # @property
+    # def path_epw(self) -> Path:
+    #     return self.manifest.epw_file
+
+    # @property
+    # def num_building(self) -> int:
+    #     return len(self.manifest.compiled_buildings)
+
+    # @property
+    # def num_outdoor_surfaces(self) -> int:
+    #     return self.manifest.num_outdoor_surfaces
+
+    # @property
+    # def time_step(self) -> float:
+    #     return self.manifest.time_step
 
     # -----------------------------------------------------#
     # -------------- Export and Import --------------------#
@@ -325,7 +366,10 @@ class EpLwrSimulationManager:
                 cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING: len(list_outdoor_surface_name),
             }
             for building_id, path_idf, list_outdoor_surface_name in zip(
-                list_building_id, list_path_idf_file, list_of_list_outdoor_surface_name
+                list_building_id,
+                list_path_idf_file,
+                list_of_list_outdoor_surface_name,
+                strict=False,
             )
         }
 
@@ -371,7 +415,6 @@ class EpLwrSimulationManager:
     def set_up_coupled_lwr_simulation_from_config_file(
         cls, path_config_file: str, to_pkl: bool = False
     ):
-
         # Load configuration
         config_dict = cls._load_config_file(path_config_file=path_config_file)
 
