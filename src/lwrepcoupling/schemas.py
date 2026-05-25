@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Self
 
 from pydantic import (
     BaseModel,
@@ -180,7 +181,7 @@ class SimulationManifest(BaseModel):
     energyplus_dir: Path
     epw_file_name: str
     time_step: int
-    num_outdoor_surfaces: int
+    num_total_surfaces: int
 
     compiled_buildings: list[CompiledBuildingState]
 
@@ -251,7 +252,7 @@ class SimulationManifest(BaseModel):
     # INTEGRITY VALIDATION GATES & LOADERS
     # =====================================================================
     @model_validator(mode="after")
-    def verify_list_sequence_integrity(self) -> "SimulationManifest":
+    def verify_list_sequence_integrity(self) -> Self:
         """Guarantees the structural index properties perfectly align with list ordering.
 
         Raises:
@@ -263,6 +264,24 @@ class SimulationManifest(BaseModel):
                     f"Critical manifest alignment error! Building '{b_state.building_id}' "
                     f"is at list position {expected_idx} but holds index {b_state.building_index}."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def verify_num_total_surfaces(self) -> Self:
+        """Guarantees that the total number of outdoor surfaces tracked across all buildings perfectly
+        matches the manifest declaration, to avoid connflicts between the resolution matrix size and
+        the actual surface count.
+        Raises:
+            ValueError: If a mismatch is detected between the total number of outdoor surfaces
+            tracked across all buildings and the manifest declaration.
+        """
+        num_total_surfaces = sum(len(b_state.building_id) for b_state in self.compiled_buildings)
+        if num_total_surfaces != self.num_total_surfaces:
+            raise ValueError(
+                f"Critical manifest alignment error! The total number of outdoor surfaces "
+                f"tracked across all buildings is {num_total_surfaces}, but the manifest "
+                f"declares a different total of {self.num_total_surfaces}."
+            )
         return self
 
     def verify_workspace_integrity(self) -> None:

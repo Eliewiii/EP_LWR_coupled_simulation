@@ -5,8 +5,10 @@ Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus 
 import logging
 import shutil
 import sys
+import time
 from multiprocessing import Manager, Process, get_context, shared_memory
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 from scipy.sparse import save_npz
@@ -21,6 +23,14 @@ from .utils import (
 from .utils.utils_io import WorkspaceConflictError, assert_path_is_safe_for_purging
 
 logger = logging.getLogger(__name__)
+
+
+class WorkerTracker(NamedTuple):
+    """Local tracking container to monitor active simulation child processes."""
+
+    building_id: str
+    building_index: int
+    process: Process
 
 
 class SimulationCrashError(RuntimeError):
@@ -54,13 +64,13 @@ class EpLwrSimulationManager:
         return self._manifest.energyplus_dir
 
     @property
-    def epw_file_name(self) -> str:
-        """The name of the weather file used in the simulation."""
-        return self._manifest.epw_file_name
+    def epw_path(self) -> Path:
+        """The path to the weather file used in the simulation."""
+        return self._manifest.epw_path
 
     @property
     def time_step(self) -> int:
-        """The name of the weather file used in the simulation."""
+        """The time step used in the simulation."""
         return self._manifest.time_step
 
     @property
@@ -69,9 +79,14 @@ class EpLwrSimulationManager:
         return self._manifest.num_buildings
 
     @property
-    def total_surfaces(self) -> int:
+    def num_total_surfaces(self) -> int:
         """The total global size of the shared-memory array allocation."""
-        return self._manifest.num_outdoor_surfaces
+        return self._manifest.num_total_surfaces
+
+    @property
+    def buildings(self) -> list[CompiledBuildingState]:
+        """The list of building identifiers included in this simulation."""
+        return self._manifest.compiled_buildings
 
     @classmethod
     def compile_and_initialize_workspace(
@@ -188,7 +203,7 @@ class EpLwrSimulationManager:
             energyplus_dir=inputs.energyplus_dir,
             epw_file_name=epw_file_name,
             time_step=inputs.time_step,
-            num_outdoor_surfaces=num_total_surfaces,
+            num_total_surfaces=num_total_surfaces,
             save_resolution_matrix=inputs.save_resolution_matrix,  # Only care about the output matrix
             compiled_buildings=compiled_buildings_list,
         )
@@ -336,89 +351,124 @@ class EpLwrSimulationManager:
         return exit_code
 
     def run_lwr_coupled_simulation(self) -> int:
-        """
-        Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings.
-        Bypasses Windows 61-handle limit by using manual Processes.
-        """
+        """Runs the coupled long-wave radiation (LWR) simulation for all buildings.
 
-        # To do: Make sure it's the proper size
-        shared_memory_array_size = self.num_outdoor_surfaces
+        Spawns and monitors individual building solver processes. Implements a
+        defensive polling execution loop to detect child process failures early,
+        aborting synchronization barriers to prevent permanent simulation deadlocks.
 
-        # Run the simulation under a Manager context to share memory, locks, and barriers
+        Raises:
+            BrokenBarrierError: If a child worker process crashes and forces
+                the synchronization grid to collapse.
+
+        Returns:
+            An integer status code: 0 for full success across all buildings,
+            1 if one or more building simulations encountered a runtime crash.
+        """
+        shared_memory_array_size = self.num_total_surfaces
+
         with Manager() as manager:
-            # Initialize a lock (Optional: only needed if multiple buildings write to exact same index)
-            shared_memory_lock = manager.Lock()
+            # Initialize Barrier, one process per building
+            synch_point_barrier = manager.Barrier(self.num_buildings)
 
-            # Initialize Barrier
-            # Note: We use the manager's barrier to ensure it works across manual processes
-            synch_point_barrier = manager.Barrier(self.num_building)
-
-            # Create shared memory blocks
-            shm = shared_memory.SharedMemory(
+            # Shared memory vectors
+            shm_temperatures = shared_memory.SharedMemory(
                 create=True, size=shared_memory_array_size * np.float64().itemsize
             )
-            shm_timestep = shared_memory.SharedMemory(
-                create=True, size=self.num_building * np.float64().itemsize
+            shm_timesteps = shared_memory.SharedMemory(
+                create=True, size=self.num_buildings * np.float64().itemsize
             )
 
-            processes = []
-            failed_processes: list[tuple[str, int]] = []
+            processes: list[WorkerTracker] = []
+            failed_processes: list[tuple[str, int, int]] = []
 
             try:
-                print(f"Launching {self.num_building} processes...")
+                # Note: Swapped to placeholder notation for logging best practices
+                logger.info("Launching %d processes...", self.num_buildings)
 
                 # --- 1. Create and Start Processes Manually ---
-                for building_id in self._building_id_list:
+                for building_index, building_state in enumerate(self.buildings):
                     p = Process(
                         target=EpSimulationInstance.run_coupled_simulation_from_ep_instance,
                         kwargs={
-                            "path_ep_instance_pkl": self._building_id_to_path_pkl_dict[building_id],
-                            "shared_memory_name": shm.name,
-                            "shared_memory_timestep_name": shm_timestep.name,
+                            "path_ep_instance_pkl": self._manifest.get_building_instance_pkl_path(
+                                building_state
+                            ),
+                            "shared_memory_temperatures_name": shm_temperatures.name,
+                            "shared_memory_timesteps_name": shm_timesteps.name,
                             "shared_memory_array_size": shared_memory_array_size,
-                            "num_building": self.num_building,
-                            "shared_memory_lock": shared_memory_lock,
                             "synch_point_barrier": synch_point_barrier,
-                            "path_epw": self._path_epw,
-                            "path_energyplus_dir": self._path_energyplus_dir,
-                            "time_step": self._time_step,
+                            "num_building": self.num_buildings,
+                            "epw_path": self.epw_path,
+                            "path_energyplus_dir": self.energyplus_dir,
+                            "time_step": self.time_step,
                         },
                     )
-                    processes.append((building_id, p))
+                    processes.append(WorkerTracker(building_state.building_id, building_index, p))
                     p.start()
 
-                # --- 2. Wait for completion (Bypasses Limit) ---
-                # Joining one by one avoids the WaitForMultipleObjects crash on Windows
-                for building_id, p in processes:
-                    p.join()
+                # --- 2. Active Polling Supervision Loop ---
+                logger.info("Entering active process supervision loop.")
 
-                    # Audit the process health immediately upon joining
-                    exit_code = p.exitcode
-                    if exit_code != 0:
-                        logger.error(
-                            "Building process [%s] terminated abnormally with exit code: %s",
-                            building_id,
-                            exit_code,
-                        )
-                        failed_processes.append((building_id, exit_code))
-                    else:
-                        logger.debug("Building process [%s] completed successfully.", building_id)
+                # Keep looping as long as there are active background processes running
+                while any(worker.process.is_alive() for worker in processes):
+                    for worker in processes:
+                        # Check if a process has finished or died
+                        if not worker.process.is_alive():
+                            exit_code = worker.process.exitcode
+
+                            # If a process exited with a code other than 0, it crashed!
+                            if exit_code is not None and exit_code != 0:
+                                logger.error(
+                                    "CRITICAL: Building process [%d] with ID %s died with exit code %s!",
+                                    worker.building_index,
+                                    worker.building_id,
+                                    exit_code,
+                                )
+
+                                # Add to tracking
+                                if (
+                                    worker.building_id,
+                                    worker.building_index,
+                                    exit_code,
+                                ) not in failed_processes:
+                                    failed_processes.append(
+                                        (worker.building_id, worker.building_index, exit_code)
+                                    )
+
+                                # THE SELF-HEAL TRIGGER: Break the barrier immediately!
+                                # This raises a BrokenBarrierError inside all other 119 buildings,
+                                # causing them to stop waiting and gracefully terminate.
+                                logger.warning(
+                                    "Aborting synch_point_barrier to release surviving processes."
+                                )
+                                synch_point_barrier.abort()
+                                break  # Drop out of the inner loop to accelerate shutdown
+
+                    # Small sleep window prevents the main thread from maxing out a CPU core while polling
+                    time.sleep(0.5)
+
+                # --- 3. Final Orderly Cleanup Join ---
+                # Now that the loop finished (either naturally or via abort), clean up the handles.
+                # This is non-blocking now because they are all guaranteed to be dead or finishing.
+                for worker in processes:
+                    worker.process.join()
 
             finally:
                 # Secure cleanup of shared memory resources to prevent OS memory leaks
-                shm.close()
-                shm.unlink()
-                shm_timestep.close()
-                shm_timestep.unlink()
+                shm_temperatures.close()
+                shm_temperatures.unlink()
+                shm_timesteps.close()
+                shm_timesteps.unlink()
 
-            # --- 3. Evaluate Aggregated Results ---
+            # --- 4. Evaluate Aggregated Results ---
             if failed_processes:
                 logger.critical(
                     "Simulation batch failed. %d out of %d buildings encountered errors.",
                     len(failed_processes),
-                    self.num_building,
+                    self.num_buildings,
                 )
-                return 1  # Standard unified failure code for the manager pipeline
+                return 1
 
-        logger.info("All %d building simulations completed successfully.", self.num_building)
-        return 0  # Absolute success
+        logger.info("All %d building simulations completed successfully.", self.num_buildings)
+        return 0
