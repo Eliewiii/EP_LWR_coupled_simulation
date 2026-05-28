@@ -24,15 +24,15 @@ class BuildingInput(BaseModel):
 
     Attributes:
         building_id: Unique alphanumeric string identifying the building.
-        path_idf: Absolute filesystem path to the building's EnergyPlus IDF file.
+        idf_path: Absolute filesystem path to the building's EnergyPlus IDF file.
         outdoor_surface_names: List of outdoor surfaces in the radiation ring.
     """
 
     building_id: str
-    path_idf: FilePath
+    idf_path: FilePath
     outdoor_surface_names: list[str]
 
-    @field_validator("path_idf", mode="after")
+    @field_validator("idf_path", mode="after")
     @classmethod
     def enforce_idf_extension(cls, v: FilePath) -> FilePath:
         """Enforces that the incoming layout file uses a valid .idf extension."""
@@ -126,6 +126,7 @@ class CompiledBuildingState(BaseModel):
 
     building_id: str
     building_index: int
+    num_surfaces: int
 
     @classmethod
     def short_id(cls, building_index: int) -> str:
@@ -147,6 +148,13 @@ class CompiledBuildingState(BaseModel):
             cls.derive_output_dir(runs_dir, building_index) / f"{cls.short_id(building_index)}.pkl"
         )
 
+    @classmethod
+    def derive_idf_path(cls, runs_dir: Path, building_index: int) -> Path:
+        """Pure formula determining a building's serialized worker binary destination."""
+        return (
+            cls.derive_output_dir(runs_dir, building_index) / f"{cls.short_id(building_index)}.idf"
+        )
+
     # =====================================================================
     # LIVE PROPERTY INSTANCE WRAPPERS
     # =====================================================================
@@ -157,6 +165,10 @@ class CompiledBuildingState(BaseModel):
     def get_instance_pkl_path(self, runs_dir: Path) -> Path:
         """Instance method wrapper calling the underlying classmethod formula."""
         return self.derive_instance_pkl_path(runs_dir, self.building_index)
+
+    def get_idf_path(self, runs_dir: Path) -> Path:
+        """Instance method wrapper calling the underlying classmethod formula."""
+        return self.derive_idf_path(runs_dir, self.building_index)
 
 
 class SimulationManifest(BaseModel):
@@ -210,6 +222,13 @@ class SimulationManifest(BaseModel):
         )
 
     @classmethod
+    def derive_building_idf_path(cls, workspace_dir: Path, building_index: int) -> Path:
+        """Pure formula to determine a building worker's IDF file location."""
+        return CompiledBuildingState.derive_idf_path(
+            runs_dir=cls.derive_runs_dir(workspace_dir), building_index=building_index
+        )
+
+    @classmethod
     def derive_json_path(cls, workspace_dir: Path) -> Path:
         """Pure formula to determine the manifest JSON file location from a workspace root."""
         return workspace_dir / cls.MANIFEST_FILE_NAME
@@ -237,16 +256,30 @@ class SimulationManifest(BaseModel):
         """Computes the absolute path to the compiled solver matrix file."""
         return self.derive_resolution_matrix_path(self.workspace_dir)
 
+    @property
+    def json_path(self) -> Path:
+        """Resolves the absolute path to the manifest JSON file."""
+        return self.derive_json_path(self.workspace_dir)
+
+    # =====================================================================
+    # Getters for building-specific paths that delegate to the underlying classmethod formulas
+    # =====================================================================
     def get_building_instance_pkl_path(self, building_state: CompiledBuildingState) -> Path:
         """Resolves a target building binary file location on disk via delegation."""
         return self.derive_building_instance_pkl_path(
             workspace_dir=self.workspace_dir, building_index=building_state.building_index
         )
 
-    @property
-    def json_path(self) -> Path:
-        """Resolves the absolute path to the manifest JSON file."""
-        return self.derive_json_path(self.workspace_dir)
+    def get_building_idf_path(self, building_state: CompiledBuildingState) -> Path:
+        """Resolves a target building IDF file location on disk via delegation."""
+        return self.derive_building_idf_path(
+            workspace_dir=self.workspace_dir,
+            building_index=building_state.building_index,
+        )
+
+    def get_building_output_dir(self, building_state: CompiledBuildingState) -> Path:
+        """Resolves a target building output directory location on disk via delegation."""
+        return building_state.get_output_dir(runs_dir=self.runs_dir)
 
     # =====================================================================
     # INTEGRITY VALIDATION GATES & LOADERS
@@ -275,7 +308,7 @@ class SimulationManifest(BaseModel):
             ValueError: If a mismatch is detected between the total number of outdoor surfaces
             tracked across all buildings and the manifest declaration.
         """
-        num_total_surfaces = sum(len(b_state.building_id) for b_state in self.compiled_buildings)
+        num_total_surfaces = sum(b_state.num_surfaces for b_state in self.compiled_buildings)
         if num_total_surfaces != self.num_total_surfaces:
             raise ValueError(
                 f"Critical manifest alignment error! The total number of outdoor surfaces "
@@ -309,6 +342,12 @@ class SimulationManifest(BaseModel):
                 raise FileNotFoundError(
                     f"Corrupted workspace detected! Missing critical execution binary "
                     f"for building '{b_state.building_id}' at: {expected_pkl}"
+                )
+            expected_idf = self.get_building_idf_path(b_state)
+            if not expected_idf.is_file():
+                raise FileNotFoundError(
+                    f"Corrupted workspace detected! Missing critical IDF file "
+                    f"for building '{b_state.building_id}' at: {expected_idf}"
                 )
 
     @classmethod

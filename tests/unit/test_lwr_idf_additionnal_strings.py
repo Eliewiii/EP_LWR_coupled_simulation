@@ -4,12 +4,17 @@ _summary_
 
 import pytest
 from pydantic import ValidationError
+
 # Replace 'your_module' with your actual file name
-from src.lwrepcoupling.lwr_idf_additionnal_strings import SurfaceAddStringConfig, generate_surface_lwr_idf_additional_string
+from src.lwrepcoupling.lwr_idf_additionnal_strings import (
+    SurfaceAddStringConfig,
+    generate_surface_lwr_idf_additional_string,
+)
 
 # ---------------------------------------------------------
 # Testing the Inputs and Constraints
 # ---------------------------------------------------------
+
 
 def test_valid_view_factor_sum():
     """Ensure a physically valid combination passes validation."""
@@ -17,7 +22,7 @@ def test_valid_view_factor_sum():
         surface_name="Zone1_WallNorth",
         cumulated_ext_surf_view_factor=0.5,
         sky_view_factor=0.3,
-        ground_view_factor=0.1
+        ground_view_factor=0.1,
     )
     assert config.surface_name == "Zone1_WallNorth"
 
@@ -28,7 +33,7 @@ def test_invalid_total_view_factor_throws():
         SurfaceAddStringConfig(
             surface_name="Zone1_WallNorth",
             cumulated_ext_surf_view_factor=0.7,
-            sky_view_factor=0.4  # Sum = 1.1 -> Should crash
+            sky_view_factor=0.4,  # Sum = 1.1 -> Should crash
         )
 
 
@@ -38,12 +43,14 @@ def test_negative_view_factor_throws():
         SurfaceAddStringConfig(
             surface_name="Zone1_WallNorth",
             cumulated_ext_surf_view_factor=0.5,
-            sky_view_factor=-0.15
+            sky_view_factor=-0.15,
         )
+
 
 # ---------------------------------------------------------
 # Structural Testing (No exact text matching)
 # ---------------------------------------------------------
+
 
 def test_idf_string_structure_with_optionals():
     """Ensure optional fields map cleanly into the final text format when populated."""
@@ -51,15 +58,15 @@ def test_idf_string_structure_with_optionals():
         surface_name="WallA",
         cumulated_ext_surf_view_factor=0.4,
         sky_view_factor=0.3,
-        ground_view_factor=0.2
+        ground_view_factor=0.2,
     )
-    
-    result = generate_surface_lwr_idf_additional_string("WallA", config)
-    
+
+    result = generate_surface_lwr_idf_additional_string(config)
+
     # Check that crucial identifiers are embedded
     assert "WallA_locEnv" in result
     assert "WallA_SurSur" in result
-    
+
     # Check that the numbers actually made it into the text block
     assert "0.3" in result  # Sky VF
     assert "0.2" in result  # Ground VF
@@ -71,14 +78,14 @@ def test_idf_string_structure_with_missing_optionals():
         surface_name="WallB",
         cumulated_ext_surf_view_factor=0.6,
         sky_view_factor=None,
-        ground_view_factor=None
+        ground_view_factor=None,
     )
-    
-    result = generate_surface_lwr_idf_additional_string("WallB", config)
-    
+
+    result = generate_surface_lwr_idf_additional_string(config)
+
     # Verify the object references exist
     assert "\n  , !- Sky View Factor\n" in result
-    
+
     # Crucial: Since they were None, verify they don't corrupt the formatting
     # EnergyPlus expects standard empty commas for defaulted fields
     assert "\n  , !- Ground View Factor" in result

@@ -177,22 +177,21 @@ class EpLwrSimulationManager:
             )
             # TODO adjust the method bellow
             EpSimulationInstance.init_and_preprocess_to_pkl(
-                identifier=b_input.building_id,
+                building_input=b_input,
                 simulation_index=i,
-                path_output_dir=building_output_dir,
-                path_idf=b_input.path_idf,
-                outdoor_surface_id_list=b_input.outdoor_surface_names,
                 min_surface_index=min_surface_index,
                 max_surface_index=max_surface_index,
                 resolution_mtx=building_matrix_slice,
+                path_output_dir=building_output_dir,
                 srd_vf_list=building_vf_srd_slice,
-                pkl_path=building_instance_pkl_path,
+                pkl_file_path=building_instance_pkl_path,
             )
 
             compiled_buildings_list.append(
                 CompiledBuildingState(
                     building_id=b_input.building_id,
                     building_index=i,
+                    num_surfaces=num_surfaces,
                 )
             )
             min_surface_index = max_surface_index + 1
@@ -365,7 +364,6 @@ class EpLwrSimulationManager:
             An integer status code: 0 for full success across all buildings,
             1 if one or more building simulations encountered a runtime crash.
         """
-        shared_memory_array_size = self.num_total_surfaces
 
         with Manager() as manager:
             # Initialize Barrier, one process per building
@@ -373,7 +371,7 @@ class EpLwrSimulationManager:
 
             # Shared memory vectors
             shm_temperatures = shared_memory.SharedMemory(
-                create=True, size=shared_memory_array_size * np.float64().itemsize
+                create=True, size=self.num_total_surfaces * np.float64().itemsize
             )
             shm_timesteps = shared_memory.SharedMemory(
                 create=True, size=self.num_buildings * np.float64().itemsize
@@ -391,17 +389,19 @@ class EpLwrSimulationManager:
                     p = Process(
                         target=EpSimulationInstance.run_coupled_simulation_from_ep_instance,
                         kwargs={
-                            "path_ep_instance_pkl": self._manifest.get_building_instance_pkl_path(
+                            "ep_instance_pkl_path": self._manifest.get_building_instance_pkl_path(
                                 building_state
                             ),
+                            "epw_path": self.epw_path,
+                            "energyplus_dir": self.energyplus_dir,
+                            "time_step": self.time_step,
+                            "output_dir": self._manifest.get_building_output_dir(building_state),
+                            "idf_path": self._manifest.get_building_idf_path(building_state),
+                            "num_buildings": self.num_buildings,
+                            "num_total_surfaces": self.num_total_surfaces,
                             "shared_memory_temperatures_name": shm_temperatures.name,
                             "shared_memory_timesteps_name": shm_timesteps.name,
-                            "shared_memory_array_size": shared_memory_array_size,
                             "synch_point_barrier": synch_point_barrier,
-                            "num_building": self.num_buildings,
-                            "epw_path": self.epw_path,
-                            "path_energyplus_dir": self.energyplus_dir,
-                            "time_step": self.time_step,
                         },
                     )
                     processes.append(WorkerTracker(building_state.building_id, building_index, p))

@@ -10,6 +10,7 @@ import pickle
 import shutil
 import sys
 from multiprocessing import shared_memory
+from pathlib import Path
 from threading import BrokenBarrierError
 from typing import List, Optional
 
@@ -20,6 +21,7 @@ from .lwr_idf_additionnal_strings import (
     name_surrounding_surface_temperature_schedule,
 )
 from .pyenergyplus.api import EnergyPlusAPI
+from .schemas import BuildingInput
 
 logger = logging.getLogger(__name__)
 
@@ -128,15 +130,14 @@ class EpSimulationInstance:
     @classmethod
     def init_and_preprocess_to_pkl(
         cls,
-        identifier: str,
+        building_input: BuildingInput,
         simulation_index: int,
-        path_idf: str,
-        path_output_dir: str,
         min_surface_index: int,
         max_surface_index: int,
-        outdoor_surface_id_list: List[str],
         resolution_mtx: np.ndarray,
         srd_vf_list: List[float],
+        path_output_dir: Path,
+        pkl_file_path: Path,
         sky_vf_list: Optional[List[float]] = None,
         ground_vf_list: Optional[List[float]] = None,
     ) -> str:

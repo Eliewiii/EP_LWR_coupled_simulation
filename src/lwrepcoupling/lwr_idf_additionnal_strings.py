@@ -53,22 +53,13 @@ class SurfaceAddStringConfig(BaseModel):
         return self
 
 
-def generate_surface_lwr_idf_additional_string(
-    surface_name: str, add_string_config: SurfaceAddStringConfig
-) -> str:
+def generate_surface_lwr_idf_additional_string(add_string_config: SurfaceAddStringConfig) -> str:
     """
-
-    :param surface_name:
-    :param sky_view_factor:
-    :param ground_view_factor: View factor to the ground, if not used, set to 0.
-    :param cumulated_ext_surf_view_factor: cumulated view factors of all the surrounding surfaces.
-    :param ground_temperature_schedule: schedule name for the ground temperature, to be left empty if not used.
-        If used, it will be common to all surfaces, and thus created once, outside of this function.
-        For more detailed ground temperature, use the dedicated SurfaceProperty:GroundSurfaces, with multiple surfaces
-        and schedules, or one ground surface for each surface, with averaged and weighted temperature the same way as
-        regular context surface. Not implemented here as no ground temperature model was developed.
-    :return:
+    Generate the additional IDF string for a given surface based on the provided configuration.
+    :param add_string_config: Configuration object containing all necessary parameters for string generation.
+    :return: A formatted string to be appended to the IDF file for LWR coupling
     """
+    surface_name = add_string_config.surface_name
 
     surface_property_local_environment_name = (
         surface_name + "_locEnv"

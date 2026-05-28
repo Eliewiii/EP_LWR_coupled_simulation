@@ -4,237 +4,223 @@ managing the handlers etc.
 """
 
 import logging
-import math
-import os
 import pickle
 import shutil
 import sys
 from multiprocessing import shared_memory
+from multiprocessing.synchronize import Barrier as MpBarrier
+from pathlib import Path
 from threading import BrokenBarrierError
 from typing import List, Optional
 
 import numpy as np
 
 from .lwr_idf_additionnal_strings import (
+    SurfaceAddStringConfig,
     generate_surface_lwr_idf_additional_string,
     name_surrounding_surface_temperature_schedule,
 )
 from .pyenergyplus.api import EnergyPlusAPI
+from .schemas import BuildingInput, CompiledBuildingState
 
 logger = logging.getLogger(__name__)
 
 
-class EpSimulationInstance:
-    def __init__(self, identifier: str, path_idf: str, path_output_dir: str):
+class EpSimulationBlueprint:
+    """The lightweight, picklable data blueprint that lives in the parent process.
+
+    Tracks all the static configuration, geometry mapping metadata, and arrays
+    needed by the physics solvers. It manages its own serialization during
+    the workspace preprocessing pipeline phase.
+    """
+
+    def __init__(
+        self,
+        identifier: str,
+        simulation_index: int,
+        surface_index_min: int,
+        surface_index_max: int,
+        outdoor_surface_names: List[str],
+        resolution_mtx: np.ndarray,
+    ):
+        self.identifier = identifier
+
+        # Synchronization properties
+        self.simulation_index = simulation_index
+        self.surface_index_min = surface_index_min
+        self.surface_index_max = surface_index_max
+
+        # Geometry arrays (populated during your preprocessing stage)
+        self.outdoor_surface_names = outdoor_surface_names
+        self.resolution_mtx = resolution_mtx
+
+    # -----------------------------------------------------------------
+    # SERIALIZATION LAYER
+    # -----------------------------------------------------------------
+    def to_pkl(self, destination_file_path: Path) -> str:
+        """Serializes this blueprint configuration securely to a binary pickle file.
+
+        Args:
+            destination_file_path: The absolute target path for the file
+                (e.g., /workspace/runs_dir/building_0.pkl).
+
+        Returns:
+            str: The string representation of the saved file path.
         """
-        Constructor of the class.
-        :param identifier: str, The identifier of the building/simulation
-        :param path_idf: str, The path to the IDF file of the building
-        :param path_output_dir: str, The path to the output directory of the simulation
-        :param simulation_index: int, The index of the simulation in the manager
+        logger.info("Serializing preprocessing blueprint token to disk for: %s", self.identifier)
+
+        # Ensure parent directories physically exist on disk before writing binary payloads
+        destination_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(destination_file_path, "wb") as f:
+            # HIGHEST_PROTOCOL is essential here; it compresses multi-dimensional
+            # NumPy arrays (like resolution_mtx) into incredibly efficient binary structures.
+            pickle.dump(self, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        return str(destination_file_path)
+
+    @classmethod
+    def from_pkl(cls, source_file_path: Path) -> "EpSimulationBlueprint":
+        """Deserializes a saved blueprint binary file back into a live Python instance.
+
+        This method will be called down the line within your child processes
+        to instantly recover the preprocessed state.
         """
-        # Identifier
-        self._identifier = identifier
-        # EP API and state
-        self._api: EnergyPlusAPI | None = None
-        self._state = None
-        # Paths to the files and directories
-        self._path_original_idf = path_idf
-        self._path_simulated_idf = None
-        self._path_output_dir = path_output_dir
+        if not source_file_path.is_file():
+            raise FileNotFoundError(f"Target simulation blueprint file missing: {source_file_path}")
 
-        # Geometry
-        self._outdoor_surface_name_list = []
-        self._outdoor_surface_surrounding_surface_vf_list = []
-        self._outdoor_surface_sky_vf_list = []
-        self._outdoor_surface_ground_vf_list = []
-        # todo: potentially need to add the emissivity or other related parameters
+        with open(source_file_path, "rb") as f:
+            instance = pickle.load(f)
 
-        # Handlers
-        self._schedule_name_list = []
-        self._schedule_actuator_handle_list = []
-        self._surface_temp_handler_list = []
-        self._surrounding_surface_temperature_schedule_temperature_handler_list = []
+        if not isinstance(instance, cls):
+            raise TypeError(
+                f"Loaded object type mismatch. Expected {cls.__name__}, got {type(instance).__name__}"
+            )
 
-        # flags
-        self._warmup_started = False
-        self._warmup_done = False
+        return instance
 
-        # LWR data
-        self._resolution_mtx = None
-
-        # Synchronization attributes
-        self._simulation_index = None
-        self._surface_index_min = None
-        self._surface_index_max = None
-
-        # Test variables to check
-        self._test_temperature_list = []
-        self._test_surrounding_surface_temperature_list = []
-        self._test_current_time_list = []
-
-    # -----------------------------------------------------#
-    # --------------------- Properties --------------------#
-    # -----------------------------------------------------#
-
-    @property
-    def num_outdoor_surfaces(self) -> int:
-        return len(self._outdoor_surface_name_list)
-
-    # -----------------------------------------------------#
-    # -------------- Export and Import --------------------#
-    # -----------------------------------------------------#
-
-    def to_pkl(
-        self, path_folder: str, file_name: Optional[str] = None, get_path_only: bool = False
-    ) -> str:
-        """
-        Save the instance to a pickle file.
-        :param path_folder: str, The folder path where the pickle file will be saved.
-        :param file_name: Optional[str], The name of the pickle file.
-        :param get_path_only: bool, If True, return the path of the pickle file only; otherwise, save the instance.
-        :return: str, The path of the pickle file.
-        """
-        if file_name is None:
-            file_name = f"ep_sim_instance_{self._identifier}.pkl"
-        path_pkl_file = os.path.join(path_folder, file_name)
-
-        if not get_path_only:
-            try:
-                with open(path_pkl_file, "wb") as f:
-                    pickle.dump(self, f)
-            except IOError as e:
-                raise RuntimeError(f"Error saving pickle file: {e}")
-
-        return path_pkl_file
-
-    @staticmethod
-    def from_pkl(path_pkl_file: str) -> "EpSimulationInstance":
-        """
-        Load an EpSimulationInstance object from a pickle file.
-        :param path_pkl_file: str, The path of the pickle file.
-        :return: EpSimulationInstance, The loaded instance.
-        """
-        try:
-            with open(path_pkl_file, "rb") as f:
-                return pickle.load(f)
-        except IOError as e:
-            raise RuntimeError(f"Error loading pickle file: {e}")
-
-    # -----------------------------------------------------#
-    # ---- Generate object from simulation manager --------#
-    # -----------------------------------------------------#
-
+    # -----------------------------------------------------------------
+    # PREPROCESSING LIFE CYCLE PIPELINE
+    # -----------------------------------------------------------------
     @classmethod
     def init_and_preprocess_to_pkl(
         cls,
-        identifier: str,
+        building_input: BuildingInput,
         simulation_index: int,
-        path_idf: str,
-        path_output_dir: str,
         min_surface_index: int,
         max_surface_index: int,
-        outdoor_surface_id_list: List[str],
         resolution_mtx: np.ndarray,
+        srd_vf_list: List[float],
+        runs_dir: Path,
+        pkl_file_path: Path,
+        sky_vf_list: Optional[List[float]] = None,
+        ground_vf_list: Optional[List[float]] = None,
+    ) -> None:
+        """Initializes a simulation blueprint, handles text preprocessing, and serializes to a file.
+
+        This factory method coordinates the complete pipeline lifecycle for offline
+        workspace generation. It instantiates the tracking data container, duplicates
+        and adjusts the physical EnergyPlus IDF text configuration with custom LWR strings,
+        and dumps the frozen state to a highly optimized binary pickle token.
+
+        Args:
+            building_input: A data object containing target building definitions,
+                including the primitive IDF path and list of outdoor surface names.
+            simulation_index: The globally tracked unique sequence integer of
+                the building within the simulation execution manager.
+            min_surface_index: The lower bound index constraint indicating where this
+                building's outdoor surfaces begin writing within the shared memory vector.
+            max_surface_index: The upper bound index constraint indicating where this
+                building's outdoor surfaces finish writing within the shared memory vector.
+            resolution_mtx: A multi-dimensional NumPy array containing the precomputed
+                radiosity/geometry resolution matrices for the physics solvers.
+            srd_vf_list: A list of float view factors mapped directly to surrounding
+                built surfaces for each outdoor boundary.
+            runs_dir: The target absolute directory path where the simulation of all buildings will
+            be executed (e.g., /path/to/workspace/runs/).
+            pkl_file_path: The target absolute destination path where the binary blueprint
+                token should be saved (e.g., /path/to/workspace/runs/building_0.pkl).
+            sky_vf_list: Optional list of float view factors to the open sky vault.
+                Defaults to None.
+            ground_vf_list: Optional list of float view factors to the localized terrain ground.
+                Defaults to None.
+
+        Raises:
+            ValidationError: If the view factor configurations fail internal
+                summation limits or geometry constraint integrity guards.
+            OSError: If copying the source IDF or writing data payloads to disk
+                fails due to OS permissions or missing directories.
+        """
+        # 1. Instantiate the object container
+        ep_simulation_blueprint_obj = cls(
+            identifier=building_input.building_id,
+            simulation_index=simulation_index,
+            surface_index_min=min_surface_index,
+            surface_index_max=max_surface_index,
+            outdoor_surface_names=building_input.outdoor_surface_names,
+            resolution_mtx=resolution_mtx,
+        )
+        # 2. Complete the physical file duplication and text adjustments on disk
+        ep_simulation_blueprint_obj._adjust_idf(
+            runs_dir=runs_dir,
+            idf_path=building_input.idf_path,
+            srd_vf_list=srd_vf_list,
+            sky_vf_list=sky_vf_list,
+            ground_vf_list=ground_vf_list,
+        )
+        pkl_file_path = CompiledBuildingState.derive_instance_pkl_path(
+            runs_dir=runs_dir, building_index=simulation_index
+        )
+
+        # 3. Serialize and save the blueprint configuration asset to disk
+        ep_simulation_blueprint_obj.to_pkl(pkl_file_path)
+
+    def _adjust_idf(
+        self,
+        runs_dir: Path,
+        idf_path: Path,
+        srd_vf_list: List[float],
+        sky_vf_list: Optional[List[float]] = None,
+        ground_vf_list: Optional[List[float]] = None,
+    ) -> None:
+        """
+        Handles the physical duplication of the original IDF file and appends the generated LWR additional strings.
+        This method performs the necessary text manipulations to inject the LWR coupling definitions into the EnergyPlus configuration.
+
+        Args:
+            runs_dir: The target absolute directory path where the simulation of all buildings will
+            be executed (e.g., /path/to/workspace/runs/).
+            idf_path: The absolute path to the original IDF file that serves as the template for this building's simulation.
+            srd_vf_list: A list of float view factors mapped directly to surrounding
+                built surfaces for each outdoor boundary.
+            sky_vf_list: Optional list of float view factors to the open sky vault.
+                Defaults to None.
+            ground_vf_list: Optional list of float view factors to the localized terrain ground.
+                Defaults to None.
+        Raises:
+            ValidationError: If the view factor configurations fail internal
+                summation limits or geometry constraint integrity guards.
+            OSError: If copying the source IDF or writing data payloads to disk
+                fails due to OS permissions or missing directories.
+        """
+        additional_strings = self._generate_idfs_additional_strings(
+            srd_vf_list=srd_vf_list, sky_vf_list=sky_vf_list, ground_vf_list=ground_vf_list
+        )
+        adjusted_idf_path = CompiledBuildingState.derive_idf_path(
+            runs_dir=runs_dir, building_index=self.simulation_index
+        )
+
+        shutil.copy(idf_path, adjusted_idf_path)
+        # Add the additional strings to the IDF file
+        with open(adjusted_idf_path, "a", encoding="utf-8") as file:
+            file.write(additional_strings)
+
+    def _generate_idfs_additional_strings(
+        self,
         srd_vf_list: List[float],
         sky_vf_list: Optional[List[float]] = None,
         ground_vf_list: Optional[List[float]] = None,
     ) -> str:
-        """
-        Initialize an instance, preprocess data, and save it as a pickle file.
-        :param identifier: str, The identifier of the building/simulation.
-        :param simulation_index: int, The index of the simulation in the manager.
-        :param path_idf: str, The path to the IDF file of the building.
-        :param path_output_dir: str, The path to the output directory of the simulation.
-        :param min_surface_index: int, The minimum index of the surfaces in shared memory.
-        :param max_surface_index: int, The maximum index of the surfaces in shared memory.
-        :param outdoor_surface_id_list: List[str], The list of outdoor surface names.
-        :param resolution_mtx: np.ndarray, The resolution matrix for the simulation.
-        :param srd_vf_list: List[float], The list of view factors to surrounding surfaces.
-        :param sky_vf_list: Optional[List[float]], The list of view factors to the sky.
-        :param ground_vf_list: Optional[List[float]], The list of view factors to the ground.
-        :return: str, The path to the saved pickle file.
-        """
-        ep_simulation_instance_obj = cls(
-            identifier=identifier, path_idf=path_idf, path_output_dir=path_output_dir
-        )
-        ep_simulation_instance_obj._set_simulation_index(simulation_index)
-        ep_simulation_instance_obj._set_min_and_max_surface_index(
-            min_surface_index, max_surface_index
-        )
-        ep_simulation_instance_obj._set_outdoor_surfaces_and_view_factors(
-            outdoor_surface_id_list, srd_vf_list, sky_vf_list, ground_vf_list
-        )
-        ep_simulation_instance_obj.set_vf_matrices(resolution_mtx)
-        ep_simulation_instance_obj.adjust_idf()
-        return ep_simulation_instance_obj.to_pkl(path_output_dir)
-
-    # -----------------------------------------------------#
-    # ------------------ Init Method ----------------------#
-    # -----------------------------------------------------#
-
-    def _set_simulation_index(self, simulation_index: int):
-        """
-        Set the simulation index.
-        :param simulation_index: int, The index of the simulation in the manager.
-        """
-        self._simulation_index = simulation_index
-
-    def _set_min_and_max_surface_index(self, min_surface_index, max_surface_index):
-        """
-        Set the minimum and maximum index of the surfaces in the shared memory.
-        :param min_surface_index: int, The minimum index of the surfaces in the shared memory
-        :param max_surface_index: int, The maximum index of the surfaces in the shared memory
-        :return:
-        """
-        # todo : add some checks
-        self._surface_index_min = min_surface_index
-        self._surface_index_max = max_surface_index
-
-    def _set_outdoor_surfaces_and_view_factors(
-        self,
-        outdoor_surface_name_list: List[str],
-        outdoor_surface_surrounding_surface_vf_list: List[float],
-        outdoor_surface_sky_vf_list: Optional[List[float]],
-        outdoor_surface_ground_vf_list: Optional[List[float]],
-    ):
-        """
-        Set the outdoor surfaces and the view factors for the simulation.
-        Ensures all input lists have the same length.
-        :param outdoor_surface_name_list: List[str], The list of the names of the outdoor surfaces.
-        :param outdoor_surface_surrounding_surface_vf_list: List[float], The list of the view factors to the surrounding surfaces.
-        :param outdoor_surface_sky_vf_list: Optional[List[float]], The list of the view factors to the sky.
-        :param outdoor_surface_ground_vf_list: Optional[List[float]], The list of the view factors to the ground.
-        """
-        self._outdoor_surface_name_list = outdoor_surface_name_list
-        self._outdoor_surface_surrounding_surface_vf_list = (
-            outdoor_surface_surrounding_surface_vf_list
-        )
-        self._outdoor_surface_sky_vf_list = outdoor_surface_sky_vf_list or []
-        self._outdoor_surface_ground_vf_list = outdoor_surface_ground_vf_list or []
-
-    def set_vf_matrices(self, resolution_mxt):
-        """
-
-        :param resolution_mxt:
-        """
-        self._resolution_mtx = resolution_mxt
-
-    def adjust_idf(self):
-        """
-        Make a copy of the idf in the directory of the simulation and add the additional strings for the LWR coupling.
-        It also generates the schedule names for the surrounding surface temperature.
-        """
-        # Generate the additional strings
-        additional_strings = self.generate_idfs_additional_strings()
-        # Make a copy of the original IDF file to the output directory
-        self._path_simulated_idf = os.path.join(self._path_output_dir, "in.idf")
-        shutil.copy(self._path_original_idf, self._path_simulated_idf)
-        # Add the additional strings to the IDF file
-        with open(self._path_simulated_idf, "a") as file:
-            file.write(additional_strings)
-
-    def generate_idfs_additional_strings(self):
         """
         Generate the additional strings to add to the IDF file for the LWR coupling.
         Consist of the generation of a SurfaceProperty:LocalEnvironment and a SurfaceProperty:SurroundingSurfaces for each
@@ -242,133 +228,275 @@ class EpSimulationInstance:
         :return:
         """
         additional_strings = ""
-        for i, surface_name in enumerate(self._outdoor_surface_name_list):
-            additional_strings += generate_surface_lwr_idf_additional_string(
+        for i, surface_name in enumerate(self.outdoor_surface_names):
+            add_string_config = SurfaceAddStringConfig(
                 surface_name=surface_name,
-                cumulated_ext_surf_view_factor=self._outdoor_surface_surrounding_surface_vf_list[i],
-                # sky_view_factor=self._outdoor_surface_sky_vf_list[i],
-                # ground_view_factor=self._outdoor_surface_ground_vf_list[i]
+                cumulated_ext_surf_view_factor=srd_vf_list[i],
+                sky_view_factor=sky_vf_list[i] if sky_vf_list else None,
+                ground_view_factor=ground_vf_list[i] if ground_vf_list else None,
             )
-            # Add the schedule name to the dictionary
-            self._schedule_name_list.append(
-                name_surrounding_surface_temperature_schedule(surface_name)
-            )
+            additional_strings += generate_surface_lwr_idf_additional_string(add_string_config)
+
         return additional_strings
 
-    # -----------------------------------------------------#
-    # -----------       LWR Resolution       --------------#
-    # -----------------------------------------------------#
 
-    def compute_srd_mean_radiant_temperatures_in_c(self, temperature_p4_vector: np.ndarray):
-        """
+class EpSimulationRuntimeWorker:
+    """The real-time execution engine born exclusively inside the spawned child process.
 
-        :param temperature_vector:
-        :return:
-        """
+    All properties required by the runtime callbacks are either fully initialized
+    here or delegated smoothly to the blueprint via properties.
+    """
 
-        return (
-            np.power(
-                temperature_p4_vector.T[self._surface_index_min : self._surface_index_max + 1]
-                - self._resolution_mtx @ temperature_p4_vector.T,
-                1 / 4,
+    def __init__(
+        self,
+        blueprint: EpSimulationBlueprint,
+        energyplus_dir: Path,
+        time_step: int,
+        num_buildings: int,
+        num_total_surfaces: int,
+        shared_memory_temperatures_name: str,
+        shared_memory_timesteps_name: str,
+        synch_point_barrier: MpBarrier,
+    ):
+        # 1. Store the underlying data blueprint configuration
+        self._blueprint = blueprint
+
+        # 2. IMMEDIATELY initialize volatile runtime attributes (No more '= None')
+        self._api = EnergyPlusAPI(
+            running_as_python_plugin=True, path_to_ep_folder=str(energyplus_dir)
+        )
+        self._state = self._api.state_manager.new_state()
+
+        # 3. IMMEDIATELY bind to operating system shared memory
+        self._shm_temp = shared_memory.SharedMemory(name=shared_memory_temperatures_name)
+        self._shared_array_temperature = np.ndarray(
+            num_total_surfaces, dtype=np.float64, buffer=self._shm_temp.buf
+        )
+
+        self._shm_time = shared_memory.SharedMemory(name=shared_memory_timesteps_name)
+        self._shared_array_timestep = np.ndarray(
+            num_buildings, dtype=np.float64, buffer=self._shm_time.buf
+        )
+
+        self._synch_point_barrier = synch_point_barrier
+
+        # 4. Runtime state lists that grow during execution
+        self._schedule_actuator_handle_list: list = []
+        self._surface_temp_handler_list: list = []
+        self._surrounding_surface_temperature_schedule_temperature_handler_list: list = []
+
+        # Runtime Tracking Flags
+        self._warmup_started = False
+        self._warmup_done = False
+
+        self._time_step = time_step
+
+    # -----------------------------------------------------------------
+    # PROPERTY DELEGATION ZONE
+    # Exposes blueprint data so your callback loop remains unchanged
+    # -----------------------------------------------------------------
+    @property
+    def identifier(self) -> str:
+        return self._blueprint.identifier
+
+    @property
+    def simulation_index(self) -> int:
+        return self._blueprint.simulation_index
+
+    @property
+    def surface_index_min(self) -> int:
+        return self._blueprint.surface_index_min
+
+    @property
+    def surface_index_max(self) -> int:
+        return self._blueprint.surface_index_max
+
+    @property
+    def outdoor_surface_names(self) -> list[str]:
+        return self._blueprint.outdoor_surface_names
+
+    @property
+    def resolution_mtx(self) -> np.ndarray | None:
+        return self._blueprint.resolution_mtx
+
+    # -----------------------------------------------------------------
+    # EXECUTION ENGINE & CALLBACKS
+    # -----------------------------------------------------------------
+    @classmethod
+    def run_coupled_simulation_from_ep_instance(
+        cls,
+        ep_simulation_blueprint_pkl_path: Path,
+        *,
+        epw_path: Path,
+        energyplus_dir: Path,
+        time_step: int,
+        output_dir: Path,
+        idf_path: Path,
+        num_buildings: int,
+        num_total_surfaces: int,
+        shared_memory_temperatures_name: str,
+        shared_memory_timesteps_name: str,
+        synch_point_barrier: MpBarrier,
+    ) -> int:
+        """The entrypoint executed inside the spawned process boundary."""
+        try:
+            # 1. Load the un-modified blueprint template from disk
+            blueprint = EpSimulationBlueprint.from_pkl(ep_simulation_blueprint_pkl_path)
+
+            # 2. TODO modify     Perform your mandatory text/IDF modifications on disk
+
+            # 3. Construct the runtime worker (Instantiates ALL attributes cleanly)
+            worker = cls(
+                blueprint=blueprint,
+                energyplus_dir=energyplus_dir,
+                time_step=time_step,
+                num_buildings=num_buildings,
+                num_total_surfaces=num_total_surfaces,
+                shared_memory_temperatures_name=shared_memory_temperatures_name,
+                shared_memory_timesteps_name=shared_memory_timesteps_name,
+                synch_point_barrier=synch_point_barrier,
             )
-            - 273.15
-        ).tolist()
 
-    # -----------------------------------------------------#
-    # ----------- EnergyPlus API Preparation --------------#
-    # -----------------------------------------------------#
+            # 4. Fire the simulation execution context
+            exit_code = worker.execute(
+                epw_path=epw_path,
+                output_dir=output_dir,
+                idf_path=idf_path,
+            )
 
-    def request_variables_before_running_simulation(self):
+        except Exception as e:
+            logger.exception("Catastrophic worker process failure: %s", e)
+            sys.exit(1)
+
+        return exit_code
+
+    def execute(
+        self,
+        epw_path: Path,
+        output_dir: Path,
+        idf_path: Path,
+    ) -> int:
+        """Hooks up closures and runs the compiled C++ engine loop."""
+
+        logging.info("Starting EnergyPlus simulation for building [%s]", self.identifier)
+
+        self._request_variables_before_running_simulation()
+
+        self._api.runtime.callback_begin_new_environment(
+            self._state, self._initialize_actuator_handler_callback_function
+        )
+        self._api.runtime.callback_begin_new_environment(
+            self._state, self._init_surface_temperature_handlers_call_back_function
+        )
+        self._api.runtime.callback_end_zone_timestep_after_zone_reporting(
+            self._state, self._coupled_simulation_callback_function
+        )
+
+        try:
+            self._synch_point_barrier.wait()
+        except BrokenBarrierError:
+            sys.exit(1)
+
+        try:
+            logger.info("Launching EnergyPlus engine for building: %s", self.identifier)
+            # Run native C++ engine loop
+            exit_code = self._api.runtime.run_energyplus(
+                self._state,
+                [
+                    "-r",
+                    "-w",
+                    str(epw_path),
+                    "-d",
+                    str(output_dir),
+                    str(idf_path),
+                ],
+            )
+        except Exception as e:
+            logger.critical("Catastrophic error caught during EnergyPlus runtime loop: %s", e)
+            sys.exit(1)
+        finally:
+            # Cleanup open handles
+            self._shm_temp.close()
+            self._shm_time.close()
+
+        return exit_code
+
+    def _request_variables_before_running_simulation(self):
         """
         Request the variables to access the surface temperature of the outdoor surfaces during the simulation.
         """
-        for surface_name in self._outdoor_surface_name_list:
+        for surface_name in self.outdoor_surface_names:
             self._api.exchange.request_variable(
                 self._state, "SURFACE OUTSIDE FACE TEMPERATURE", surface_name
             )
 
-    def request_additional_variables_before_running_simulation_for_testing(self):
-        """
-        Request the variables to access the schedule values of the surrounding surface temperature during the simulation.
-        For testing purposes only as it is not needed for the LWR computation.
-        """
-        for i, surface_name in enumerate(self._outdoor_surface_name_list):
-            self._api.exchange.request_variable(
-                self._state, "Schedule Value", self._schedule_name_list[i]
-            )
+    # ---------------------------------------------------------------#
+    # --- Initialize Variable Request and Init Callback Functions ---#
+    # ---------------------------------------------------------------#
 
-    def initialize_actuator_handler_callback_function(self, state):
+    def _initialize_actuator_handler_callback_function(self) -> None:
+        """Initialize the actuator handlers for the surrounding surface temperature schedules.
+
+        Should be run at the end of the warmup period or beginning of environment.
         """
-        Initialize the actuator handlers for the surrounding surface temperature schedules.
-        Should be run at the end of the warmup period.
-        """
-        for i, surface_name in enumerate(self._outdoor_surface_name_list):
+        missing_schedules_surfaces: list[str] = []
+
+        for surface_name in self.outdoor_surface_names:
+            target_schedule_name = name_surrounding_surface_temperature_schedule(surface_name)
+
             schedule_actuator_handle = self._api.exchange.get_actuator_handle(
-                state, "Schedule:Constant", "Schedule Value", self._schedule_name_list[i]
+                self._state,  # Use the state pointer passed directly by the C++ callback engine
+                "Schedule:Constant",
+                "Schedule Value",
+                target_schedule_name,
             )
-            if schedule_actuator_handle == -1:
-                raise ValueError(
-                    f"Failed to create actuator for schedule {self._schedule_name_list[i]}"
-                )
-            else:
-                self._schedule_actuator_handle_list.append(schedule_actuator_handle)
 
-    def init_surface_temperature_handlers_call_back_function(self, state):
+            if schedule_actuator_handle == -1:
+                missing_schedules_surfaces.append(surface_name)
+                continue  # Keep searching to collect ALL failures in one run!
+
+            self._schedule_actuator_handle_list.append(schedule_actuator_handle)
+
+        # Circuit breaker: If any handles failed to initialize, raise a comprehensive error
+        if missing_schedules_surfaces:
+            raise RuntimeError(
+                f"Component Mapping Failure: Failed to retrieve API actuator handles for "
+                f"{len(missing_schedules_surfaces)} schedules in building '{self.identifier}'. "
+                f"Missing targets: {missing_schedules_surfaces}. Verify that the IDF macro injector "
+                f"appended the correct strings during the preprocessing phase."
+            )
+
+    def _init_surface_temperature_handlers_call_back_function(self):
         """
         Initialize the handlers to access the surface temperatures of the outdoor surfaces.
         Should be run at the end of the warmup period.
         """
-        for i, surface_name in enumerate(self._outdoor_surface_name_list):
+        for surface_name in self.outdoor_surface_names:
             self._surface_temp_handler_list.append(
                 self._api.exchange.get_variable_handle(
-                    state, "SURFACE OUTSIDE FACE TEMPERATURE", surface_name
+                    self._state, "SURFACE OUTSIDE FACE TEMPERATURE", surface_name
                 )
             )
 
-    def init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self, state):
+    def _init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self):
         """
         Initialize the handlers to access the schedule values of the surrounding surface temperatures.
         Should be run at the end of the warmup period.
         For testing purposes only as it is not needed for the LWR computation.
         """
-        for i, surface_name in enumerate(self._outdoor_surface_name_list):
+        for surface_name in self.outdoor_surface_names:
             self._surrounding_surface_temperature_schedule_temperature_handler_list.append(
                 self._api.exchange.get_variable_handle(
-                    state, "Schedule Value", self._schedule_name_list[i]
+                    self._state,
+                    "Schedule Value",
+                    name_surrounding_surface_temperature_schedule(surface_name),
                 )
             )
 
-    def get_surface_temperature_of_all_outdoor_surfaces_in_kelvin(self) -> List[float]:
-        """
-        Reads the surface temperature of all the outdoor surfaces and store them in a list.
-        :return: list,  List of surface temperatures
-        """
-        surface_temperatures_list = []
-        for i, surface_name in enumerate(self._outdoor_surface_name_list):
-            surface_temperatures_list.append(
-                self._api.exchange.get_variable_value(
-                    self._state, self._surface_temp_handler_list[i]
-                )
-                + 273.15
-            )  # convert to Kelvin
-        return surface_temperatures_list
-
-    # -----------------------------------------------------#
-    # ------------ Main Callback Function -----------------#
-    # -----------------------------------------------------#
-
-    # def all_instances_synch_for_warmup(self,shared_array_timestep,sim_dt):
-    #     """
-    #
-    #     :param shared_array_timestep:
-    #     :param sim_dt:
-    #     :return:
-    #     """
-    #     def is_identical_or_first_time_step()
-    #     if
-
-    def coupled_simulation_callback_function(
+    # ------------------------------#
+    # --- Main Callback Function ---#
+    # ------------------------------#
+    def _coupled_simulation_callback_function(
         self,
         state,
         shared_array,
@@ -471,115 +599,3 @@ class EpSimulationInstance:
             self._api.exchange.set_actuator_value(
                 state, self._schedule_actuator_handle_list[i], srd_mrt
             )
-
-    # -----------------------------------------------------#
-    # ------------ Run Simulation Function ----------------#
-    # -----------------------------------------------------#
-
-    @classmethod
-    def run_coupled_simulation_from_ep_instance(cls, path_ep_instance_pkl: str, **kwargs):
-        """
-
-        :param path_ep_instance_pkl:
-        :param path_file_resolution_mtx_npz:
-        :param kwargs:
-        :return:
-        """
-        # Load the ep object
-        ep_sim_inst_obj = cls.from_pkl(path_pkl_file=path_ep_instance_pkl)
-        # Run the simulation
-        ep_sim_inst_obj.run_ep_simulation(**kwargs)
-
-    def run_ep_simulation(
-        self,
-        shared_memory_name: str,
-        shared_memory_timestep_name: str,
-        shared_memory_array_size: int,
-        shared_memory_lock,
-        synch_point_barrier,
-        num_building: int,
-        path_epw: str,
-        path_energyplus_dir: str,
-        time_step: float,
-    ):
-        """
-        Run the EnergyPlus simulation with the shared memory and the synchronization objects.
-        :param shared_memory_name: str, The name of the shared memory to access the surface temperatures
-        :param shared_memory_timestep_name: str, The name of the shared memory to access the timesteps
-        :param shared_memory_array_size: int, The size of the shared memory array
-        :param shared_memory_lock: Lock, The lock to limit writing access to the shared memory
-        :param synch_point_barrier: Barrier, The barrier to synchronize processes
-        :param num_building: number of buildings simulated
-        :param path_epw: str, The path to the EPW file
-        :param path_energyplus_dir: str, The path to the EnergyPlus directory
-        :return: self: EpSimulationInstance, The instance of the simulation to update the one in the manager
-        """
-        # Point to the shared memory for surface temperature access
-        shm = shared_memory.SharedMemory(name=shared_memory_name)
-        shared_array = np.ndarray(shared_memory_array_size, dtype=np.float64, buffer=shm.buf)
-
-        shm_timestep = shared_memory.SharedMemory(name=shared_memory_timestep_name)
-        shared_array_timestep = np.ndarray(num_building, dtype=np.float64, buffer=shm_timestep.buf)
-
-        # initialize the EnergyPlus API and simulation state
-        self._api = EnergyPlusAPI(
-            running_as_python_plugin=True, path_to_ep_folder=path_energyplus_dir
-        )
-        self._state = self._api.state_manager.new_state()
-
-        # request the variables to access schedule and surface temperature values during the simulation
-        self.request_variables_before_running_simulation()
-
-        # Make wrapper for the main callback function
-        def simulation_callback_function(state):
-            """
-            Wrapper for the main callback function to pass arguments (which are not allowed in the callback function).
-            :param state:
-            """
-            return self.coupled_simulation_callback_function(
-                state,
-                shared_array,
-                shared_array_timestep,
-                shared_memory_lock,
-                synch_point_barrier,
-                time_step,
-            )
-
-        # Set the callback functions to run at the various moment of the simulation
-
-        logging.warning(f"Starting EnergyPlus simulation for building {self._identifier}")
-        self._api.runtime.callback_begin_new_environment(
-            self._state, self.initialize_actuator_handler_callback_function
-        )
-        self._api.runtime.callback_begin_new_environment(
-            self._state, self.init_surface_temperature_handlers_call_back_function
-        )
-        self._api.runtime.callback_end_zone_timestep_after_zone_reporting(
-            self._state, simulation_callback_function
-        )
-
-        try:
-            # Wait for all other buildings to catch up to this timestep
-            synch_point_barrier.wait()
-        except BrokenBarrierError:
-            logger.warning(
-                "Simulation synchronization grid collapsed due to a sister process crash. "
-                "Aborting execution loop cleanly."
-            )
-            # Perform any local cleanup if needed, then exit the process orderly
-            sys.exit(1)
-
-        # Run the EnergyPlus simulation
-        exit_code = self._api.runtime.run_energyplus(
-            self._state,
-            [
-                "-r",  # Run annual simulation
-                "-w",
-                path_epw,  # Weather file
-                "-d",
-                self._path_output_dir,  # Output directory
-                self._path_simulated_idf,  # Input IDF file
-            ],
-        )
-
-        return exit_code
