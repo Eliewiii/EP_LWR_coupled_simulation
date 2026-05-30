@@ -6,18 +6,20 @@ import logging
 import shutil
 import sys
 import time
-from multiprocessing import Manager, Process, get_context, shared_memory
+from multiprocessing import Manager, get_context, shared_memory
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
-from scipy.sparse import save_npz
+from scipy.sparse import csr_matrix, save_npz
 
-from .ep_simulation_instance import EpSimulationBlueprint
-from .schemas import CompiledBuildingState, SimulationInputs, SimulationManifest
+from .ep_simulation_instance import EpSimulationRuntimeConfig, EpSimulationRuntimeWorker
+from .schemas import BuildingInput, CompiledBuildingState, SimulationInputs, SimulationManifest
 from .utils import (
     check_matrices,
     compute_resolution_matrices,
+    generate_idfs_additional_strings,
     read_csr_matrices_from_npz,
 )
 from .utils.utils_io import WorkspaceConflictError, assert_path_is_safe_for_purging
@@ -30,7 +32,7 @@ class WorkerTracker(NamedTuple):
 
     building_id: str
     building_index: int
-    process: Process
+    process: BaseProcess
 
 
 class SimulationCrashError(RuntimeError):
@@ -94,37 +96,99 @@ class EpLwrSimulationManager:
     ) -> "EpLwrSimulationManager":
         """Consumes raw simulation inputs and structurally generates the disk workspace.
 
+        Acts as the central orchestration workflow, validating environment safety,
+        staging global dependencies, executing structural matrix calculations, and
+        compiling individual subfolders for parallel worker nodes.
+
         Args:
-            inputs: Structured configuration container holding path anchors.
-            overwrite: If True, explicitly allows clearing out an existing,
+            inputs: Structured configuration container holding data shape boundaries
+                and raw file system path anchors.
+            overwrite: If True, explicitly allows clearing out an occupied,
                 non-empty workspace folder if it passes fingerprint validation.
 
         Returns:
-            An initialized instance of the simulation manager engine.
+            An initialized and ready-to-run instance of the EpLwrSimulationManager engine.
 
         Raises:
-            SecurityViolationError: If the target path threatens OS or root safety.
-            WorkspaceConflictError: If the folder is occupied and overwrite is disabled
+            SecurityViolationError: If the target workspace path threatens OS or root boundaries.
+            WorkspaceConflictError: If the folder is occupied and overwrite is disabled,
                 or if the folder fails structural fingerprint verification.
+            ValueError: If the input view factor configurations fail internal matrix sizing,
+                or if sequential building sequence indexes are misaligned.
+            FileNotFoundError: If a generated asset or critical software dependency fails
+                the post-compilation integrity check.
+            OSError: If copying source assets or writing data payloads to disk fails
+                due to OS permissions or missing directories.
         """
-        # 1. Validate and prepare the target workspace directory, enforcing safety and exclusivity guardrails
+        # 1. Environment Guardrails & Directory Creation
         cls._make_target_workspace_dir(
             target_workspace_dir=inputs.workspace_dir, overwrite=overwrite
         )
-        working_dir = inputs.workspace_dir.resolve()  # For easier reference in the next steps
-
-        # 2. Check EnergyPlus directory and EPW file existence and move the EPW file into the workspace
-        epw_file_name = inputs.epw_path.name
-        path_epw_in_workspace = SimulationManifest.derive_epw_path(
-            workspace_dir=working_dir, epw_file_name=epw_file_name
-        )
-        shutil.copy(inputs.epw_path, path_epw_in_workspace)
-
-        # 3. Make the runs directory to hold the building subfolders
+        working_dir = inputs.workspace_dir.resolve()
         runs_dir = SimulationManifest.derive_runs_dir(working_dir)
         runs_dir.mkdir(exist_ok=False)
 
-        # 4. Use the temporary raw path inputs to load the heavy arrays into memory
+        # 2. Stage Climate Asset
+        shutil.copy(
+            inputs.epw_path, SimulationManifest.derive_epw_path(working_dir, inputs.epw_path.name)
+        )
+
+        # 3. Load & Process Numerical Infrastructure
+        resolution_mtx, total_srd_vf_list = cls._load_and_validate_matrices(inputs)
+        if inputs.save_resolution_matrix:
+            save_npz(SimulationManifest.derive_resolution_matrix_path(working_dir), resolution_mtx)
+
+        # 4. Compile Individual Building Sandbox Environments
+        compiled_buildings_list: list[CompiledBuildingState] = []
+        min_surface_index = 0
+
+        for i, b_input in enumerate(inputs.buildings):
+            building_state = cls._process_single_building_workspace(
+                building_index=i,
+                building_input=b_input,
+                runs_dir=runs_dir,
+                min_surface_index=min_surface_index,
+                resolution_mtx=resolution_mtx,
+                total_srd_vf_list=total_srd_vf_list,
+            )
+            compiled_buildings_list.append(building_state)
+            min_surface_index = building_state.surface_index_max + 1
+
+        # 5. Lock and Commit the Manifest Data Contract
+        manifest = SimulationManifest(
+            workspace_dir=working_dir,
+            energyplus_dir=inputs.energyplus_dir,
+            epw_file_name=inputs.epw_path.name,
+            num_ts_per_h=inputs.num_ts_per_h,
+            num_total_surfaces=inputs.num_total_surfaces,
+            save_resolution_matrix=inputs.save_resolution_matrix,
+            compiled_buildings=compiled_buildings_list,
+        )
+        cls._verify_workspace_integrity(manifest)
+        manifest.write_to_disk()
+
+        return cls(manifest)
+
+    @staticmethod
+    def _load_and_validate_matrices(inputs: SimulationInputs) -> tuple[csr_matrix, list[float]]:
+        """Handles matrix extraction, structural size matching, and physical system inversion.
+
+        Parses incoming CSR matrices from raw disk archives, cross-checks total surface boundaries,
+        and computes the long-wave radiation matrix inversion problem.
+
+        Args:
+            inputs: Structured configuration container holding the incoming matrix paths
+                and custom inversion parameters.
+
+        Returns:
+            A tuple containing:
+                - resolution_mtx (np.ndarray): The fully solved dense system resolution matrix.
+                - total_srd_vf_list (list[float]): Vector of calculated view factors for surrounding surfaces.
+
+        Raises:
+            ValueError: If the shapes of the read sparse matrix inputs do not perfectly match
+                the aggregate surface numbers declared in the simulation input.
+        """
         vf_mtx, eps_mtx, rho_mtx, tau_mtx = read_csr_matrices_from_npz(
             inputs.vf_matrix_path,
             inputs.eps_matrix_path,
@@ -133,13 +197,10 @@ class EpLwrSimulationManager:
         )
         check_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
 
-        num_total_surfaces = inputs.num_total_surfaces
-
-        if vf_mtx.shape[0] != num_total_surfaces:  # Validate matrix size consistency
+        if vf_mtx.shape[0] != inputs.num_total_surfaces:
             raise ValueError("The matrix dimensions must match the number of outdoor surfaces.")
 
-        # 5. Solve the physics system (The heavy linear algebra computation)
-        resolution_mtx, total_srd_vf_list = compute_resolution_matrices(
+        return compute_resolution_matrices(
             vf_matrix=vf_mtx,
             eps_matrix=eps_mtx,
             rho_matrix=rho_mtx,
@@ -147,68 +208,77 @@ class EpLwrSimulationManager:
             inversion_config=inputs.inversion_parameters,
         )
 
-        # 6. Save the compiled resolution matrix directly into its long-term home
-        res_matrix_path = SimulationManifest.derive_resolution_matrix_path(working_dir)
-        if inputs.save_resolution_matrix:
-            save_npz(res_matrix_path, resolution_mtx)
+    @staticmethod
+    def _process_single_building_workspace(
+        building_index: int,
+        building_input: BuildingInput,
+        runs_dir: Path,
+        min_surface_index: int,
+        resolution_mtx: csr_matrix,
+        total_srd_vf_list: list[float],
+    ) -> CompiledBuildingState:
+        """Isolates the filesystem modifications and mathematical slicing for a unique building.
 
-        # 7. Process buildings, slice the resolution matrix, and dump the individual worker pkls
+        Creates individual run folders on disk, slices out the specific building segment from the
+        global resolution matrix, saves the sub-matrix as a native NumPy `.npy` binary, and triggers
+        the IDF macro string injection.
 
-        compiled_buildings_list: list[CompiledBuildingState] = []
-        min_surface_index = 0
+        Args:
+            building_index: Zero-based sequence positioning tracker for the targeted building.
+            building_input: Raw incoming layout data contract containing surface collections and source paths.
+            runs_dir: Path to the active workspace subfolder hosting all execution directories.
+            min_surface_index: Offset marker defining where this building's surfaces start in the global array.
+            resolution_mtx: The fully solved dense system matrix representing all combined buildings.
+            total_srd_vf_list: Global array containing computed surrounding view factors for all surfaces.
 
-        for i, b_input in enumerate(inputs.buildings):
-            # Create a dedicated subfolder for this building's simulation instance
-            building_output_dir = CompiledBuildingState.derive_output_dir(
-                runs_dir=runs_dir, building_index=i
-            )
-            building_output_dir.mkdir(exist_ok=False)
+        Returns:
+            CompiledBuildingState: A validated Pydantic runtime data asset tracking the newly
+                compiled building sandbox.
 
-            # Slice matrix segments for this building core
-            num_surfaces = len(b_input.outdoor_surface_names)
-            max_surface_index = min_surface_index + num_surfaces - 1
+        Raises:
+            OSError: If copying the source geometry file, appending strings, or writing the
+                sliced NumPy arrays fails due to storage write exceptions.
+        """
+        building_output_dir = CompiledBuildingState.derive_output_dir(runs_dir, building_index)
+        building_output_dir.mkdir(exist_ok=False)
 
-            building_matrix_slice = resolution_mtx[min_surface_index : max_surface_index + 1, :]
-            building_vf_srd_slice = total_srd_vf_list[min_surface_index : max_surface_index + 1]
+        num_surfaces = len(building_input.outdoor_surface_names)
+        max_surface_index = min_surface_index + num_surfaces - 1
 
-            # Initialize the building instance and dump it to disk in one atomic operation
-            EpSimulationBlueprint.init_and_preprocess_to_pkl(
-                building_input=b_input,
-                simulation_index=i,
-                min_surface_index=min_surface_index,
-                max_surface_index=max_surface_index,
-                resolution_mtx=building_matrix_slice,
-                srd_vf_list=building_vf_srd_slice,
-                runs_dir=runs_dir,
-            )
+        # Slice and commit the optimized dense array segment to disk
+        building_matrix_slice = resolution_mtx[min_surface_index : max_surface_index + 1, :]
+        building_res_matrix_path = CompiledBuildingState.derive_sub_mtx_path(
+            runs_dir, building_index
+        )
+        np.save(building_res_matrix_path, building_matrix_slice)
 
-            compiled_buildings_list.append(
-                CompiledBuildingState(
-                    building_id=b_input.building_id,
-                    building_index=i,
-                    num_surfaces=num_surfaces,
-                )
-            )
-            min_surface_index = max_surface_index + 1
-
-        # 6. Build the lean runtime manifest.
-        manifest = SimulationManifest(
-            workspace_dir=working_dir,
-            energyplus_dir=inputs.energyplus_dir,
-            epw_file_name=epw_file_name,
-            num_ts_per_h=inputs.num_ts_per_h,
-            num_total_surfaces=num_total_surfaces,
-            save_resolution_matrix=inputs.save_resolution_matrix,  # Only care about the output matrix
-            compiled_buildings=compiled_buildings_list,
+        # Inject additional physics strings to target geometry description layout
+        building_vf_srd_slice = total_srd_vf_list[min_surface_index : max_surface_index + 1]
+        additional_strings = generate_idfs_additional_strings(
+            outdoor_surface_names=building_input.outdoor_surface_names,
+            srd_vf_list=building_vf_srd_slice,
+            sky_vf_list=None,
+            ground_vf_list=None,
         )
 
-        # Write out the clean, unpolluted manifest to JSON
-        manifest.write_to_disk()
+        adjusted_idf_path = CompiledBuildingState.derive_idf_path(runs_dir, building_index)
+        shutil.copy(building_input.idf_path.resolve(), adjusted_idf_path)
+        with open(adjusted_idf_path, "a", encoding="utf-8") as file:
+            file.write(additional_strings)
 
-        return cls(manifest)
+        return CompiledBuildingState(
+            building_id=building_input.building_id,
+            building_index=building_index,
+            num_surfaces=num_surfaces,
+            outdoor_surface_names=building_input.outdoor_surface_names,
+            surface_index_min=min_surface_index,
+            surface_index_max=max_surface_index,
+        )
 
-    @staticmethod
-    def _make_target_workspace_dir(target_workspace_dir: Path, overwrite: bool = False) -> None:
+    @classmethod
+    def _make_target_workspace_dir(
+        cls, target_workspace_dir: Path, overwrite: bool = False
+    ) -> None:
         """Generate a clean, structurally sound workspace directory is ready for the simulation to run.
 
         Args:
@@ -239,7 +309,7 @@ class EpLwrSimulationManager:
                     ),
                 )
 
-            SimulationManifest.verify_workspace_exclusivity(resolved_workspace)
+            cls._verify_workspace_exclusivity(resolved_workspace)
 
             # =====================================================================
             # ATOMIC PURGE OF SANCTIONED ENVIRONMENT
@@ -252,12 +322,99 @@ class EpLwrSimulationManager:
         # Ensure a clean directory root exists to begin compiling
         resolved_workspace.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _verify_workspace_integrity(manifest: SimulationManifest) -> None:
+        """Strictly verifies that all core engines, layout folders, and assets exist on disk.
+
+        Raises:
+            FileNotFoundError: If any critical compilation dependency is missing.
+        """
+        # Delegating cleanly to self (the manager encapsulates the manifest properties)
+        if not manifest.energyplus_dir.is_dir():
+            raise FileNotFoundError(
+                f"Missing core EnergyPlus engine directory at: {manifest.energyplus_dir}"
+            )
+
+        if not manifest.epw_path.is_file():
+            raise FileNotFoundError(
+                f"Missing simulation weather file (EPW) at: {manifest.epw_path}"
+            )
+
+        # If you saved a master resolution matrix file during workspace compilation
+        res_matrix_path = SimulationManifest.derive_resolution_matrix_path(manifest.workspace_dir)
+        if manifest.save_resolution_matrix and not res_matrix_path.is_file():
+            raise FileNotFoundError(
+                f"Missing compiled master resolution matrix at: {res_matrix_path}"
+            )
+
+        # Iterate through compiled states, verifying file structures
+        runs_dir = SimulationManifest.derive_runs_dir(manifest.workspace_dir)
+        for b_state in manifest.compiled_buildings:
+            # We check the native .npy file rather than the dead binary .pkl!
+            expected_npy = b_state.get_sub_mtx_path(runs_dir)
+            if not expected_npy.is_file():
+                raise FileNotFoundError(
+                    f"Corrupted workspace detected! Missing critical matrix binary "
+                    f"for building '{b_state.building_id}' at: {expected_npy}"
+                )
+
+            expected_idf = b_state.get_idf_path(runs_dir)
+            if not expected_idf.is_file():
+                raise FileNotFoundError(
+                    f"Corrupted workspace detected! Missing critical IDF file "
+                    f"for building '{b_state.building_id}' at: {expected_idf}"
+                )
+
+    @staticmethod
+    def _verify_workspace_exclusivity(target_workspace_dir: Path) -> None:
+        """Strictly verifies that the workspace contains *only* authorized assets.
+
+        Prevents foreign or unknown data corruption by serving as a fingerprint guardrail.
+        """
+        resolved_workspace = target_workspace_dir.resolve()
+
+        # Define our rigid, sanctioned execution perimeter names
+        authorized_paths: set[Path] = {
+            resolved_workspace / SimulationManifest.MANIFEST_FILE_NAME,
+            (resolved_workspace / SimulationManifest.RUNS_DIR_NAME).resolve(),
+            (resolved_workspace / SimulationManifest.RESOLUTION_MTX_FILE_NAME).resolve(),
+        }
+
+        epw_file_count = 0
+
+        for physical_item in resolved_workspace.iterdir():
+            resolved_item = physical_item.resolve()
+
+            if resolved_item in authorized_paths:
+                continue
+
+            if resolved_item.is_file() and resolved_item.suffix.lower() == ".epw":
+                epw_file_count += 1
+                if epw_file_count <= 1:
+                    continue  # Authorized standard environment profile
+
+                raise WorkspaceConflictError(
+                    target_path=resolved_workspace,
+                    message=(
+                        f"Security Block: Multiple climate profiles discovered inside '{resolved_workspace.name}'. "
+                        f"Workspace must contain at most one weather data file to guarantee deterministic execution."
+                    ),
+                )
+
+            raise WorkspaceConflictError(
+                target_path=resolved_workspace,
+                message=(
+                    f"Security Block: Workspace exclusivity breach! Found unexpected foreign asset "
+                    f"'{resolved_item.name}' inside the workspace perimeter. Operations blocked to preserve data."
+                ),
+            )
+
     # -----------------------------------------------------#
     # -----------------  Run Simulation     ---------------#
     # -----------------------------------------------------#
 
     @classmethod
-    def run_from_workspace_dir(cls, workspace_dir: Path) -> int:
+    def _run_from_workspace_dir(cls, workspace_dir: Path) -> int:
         """The clean pipeline entrypoint executing within the clean process boundary.
 
         Args:
@@ -304,6 +461,7 @@ class EpLwrSimulationManager:
 
         # Load data, automatically fixing any moved path references safely and ensure integrity
         adapted_manifest = SimulationManifest.load_and_adapt(manifest_path)
+        cls._verify_workspace_integrity(manifest=adapted_manifest)
 
         if debug_mode:
             print("Debug mode enabled: Running simulation in the main process.")
@@ -312,7 +470,7 @@ class EpLwrSimulationManager:
         else:
             ctx = get_context("spawn")
 
-            process = ctx.Process(target=cls.run_from_workspace_dir, args=(workspace_dir,))
+            process = ctx.Process(target=cls._run_from_workspace_dir, args=(workspace_dir,))
 
             process.start()
             process.join()  # Wait for it to finish and free all memory cleanly
@@ -359,6 +517,9 @@ class EpLwrSimulationManager:
             An integer status code: 0 for full success across all buildings,
             1 if one or more building simulations encountered a runtime crash.
         """
+        # Using an explicit 'spawn' context here instead of the default Linux 'fork'
+        # to prevent deadlocks when duplicating the underlying native pyenergyplus C++ runtime bindings.
+        ctx = get_context("spawn")
 
         with Manager() as manager:
             # Initialize Barrier, one process per building
@@ -381,23 +542,20 @@ class EpLwrSimulationManager:
 
                 # --- 1. Create and Start Processes Manually ---
                 for building_index, building_state in enumerate(self.buildings):
-                    p = Process(
-                        target=EpSimulationInstance.run_coupled_simulation_from_ep_instance,
-                        kwargs={
-                            "ep_instance_pkl_path": self._manifest.get_building_instance_pkl_path(
-                                building_state
-                            ),
-                            "epw_path": self.epw_path,
-                            "energyplus_dir": self.energyplus_dir,
-                            "num_ts_per_h": self.num_ts_per_h,
-                            "output_dir": self._manifest.get_building_output_dir(building_state),
-                            "idf_path": self._manifest.get_building_idf_path(building_state),
-                            "num_buildings": self.num_buildings,
-                            "num_total_surfaces": self.num_total_surfaces,
-                            "shared_memory_temperatures_name": shm_temperatures.name,
-                            "shared_memory_timesteps_name": shm_timesteps.name,
-                            "synch_point_barrier": synch_point_barrier,
-                        },
+                    runtime_config = EpSimulationRuntimeConfig(
+                        building_state=building_state,
+                        epw_path=self.epw_path,
+                        num_ts_per_h=self.num_ts_per_h,
+                        runs_dir=self._manifest.runs_dir,
+                        num_buildings=self.num_buildings,
+                        num_total_surfaces=self.num_total_surfaces,
+                        shared_memory_temperatures_name=shm_temperatures.name,
+                        shared_memory_timesteps_name=shm_timesteps.name,
+                        synch_point_barrier=synch_point_barrier,
+                    )
+                    p = ctx.Process(
+                        target=EpSimulationRuntimeWorker.run_coupled_simulation,
+                        args=(runtime_config,),
                     )
                     processes.append(WorkerTracker(building_state.building_id, building_index, p))
                     p.start()
@@ -441,7 +599,7 @@ class EpLwrSimulationManager:
                                 break  # Drop out of the inner loop to accelerate shutdown
 
                     # Small sleep window prevents the main thread from maxing out a CPU core while polling
-                    time.sleep(0.5)
+                    time.sleep(0.01)
 
                 # --- 3. Final Orderly Cleanup Join ---
                 # Now that the loop finished (either naturally or via abort), clean up the handles.

@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 # Replace 'your_module' with your actual file name
-from src.lwrepcoupling.lwr_idf_additionnal_strings import (
+from src.lwrepcoupling.utils.utils_idf_additionnal_strings import (
     SurfaceAddStringConfig,
     generate_surface_lwr_idf_additional_string,
 )

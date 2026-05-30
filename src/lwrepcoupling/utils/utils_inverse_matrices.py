@@ -132,50 +132,6 @@ def _solve_gmres_for_one_column(args) -> tuple[int, np.ndarray, int]:
     return i, x, exitCode  # Return column index and result to maintain order
 
 
-def check_inversion_parameters(**kwargs) -> dict:
-    """
-    Validates and filters inversion parameters for the GMRES-based matrix inversion function.
-
-    :param kwargs: Keyword arguments that may contain parameters for `compute_full_inverse_via_gmres_parallel`
-    :return: A dictionary with valid inversion parameters (only those explicitly provided).
-    :raises ValueError: If an invalid parameter, incorrect type, or out-of-bounds value is provided.
-    """
-    # TODO: use pydantic for this validation instead of manual checks
-
-    # Define allowed parameters, their expected types, and value constraints (min, max)
-    valid_params = {
-        "tol": (float, (1e-8, 1e-4)),  # Tolerance must be within [1e-10, 1e-2]
-        "maxiter": (int, (10, 1000)),  # Maximum iterations must be [1, 1000]
-        "rtol": (float, (1e-10, 1e-5)),  # Relative tolerance in [1e-10, 1e-5]
-        "precondition": (bool, None),  # No constraint on boolean values
-        "num_workers": (int, (0, 64)),  # Parallel workers in [0, 64]
-    }
-
-    validated_kwargs = {}
-
-    # Validate provided parameters
-    for key, value in kwargs.items():
-        if key not in valid_params:
-            raise ValueError(f"Invalid parameter: '{key}' is not recognized.")
-
-        expected_type, constraints = valid_params[key]
-        if not isinstance(value, expected_type):
-            raise ValueError(
-                f"Invalid type for '{key}': Expected {expected_type.__name__}, got {type(value).__name__}"
-            )
-
-        if constraints and isinstance(value, (int, float)):  # Apply constraints if they exist
-            min_val, max_val = constraints
-            if not (min_val <= value <= max_val):
-                raise ValueError(
-                    f"'{key}' is out of range: Expected between {min_val} and {max_val}, got {value}"
-                )
-
-        validated_kwargs[key] = value  # Add only valid values
-
-    return validated_kwargs  # No defaults applied, only validated inputs
-
-
 # def compute_full_inverse_via_gmres(
 #     mtx: Any,
 #     tol: float = 1e-5,

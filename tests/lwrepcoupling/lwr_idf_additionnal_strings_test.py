@@ -1,15 +1,14 @@
-"""
+""" """
 
-"""
-import os
-
-from src.lwrepcoupling.lwr_idf_additionnal_strings import generate_surface_lwr_idf_additional_string, \
-    _write_surface_temperature_schedule, _write_surface_property_surrounding_surfaces, \
-    _write_surface_property_local_environment
+from src.lwrepcoupling.utils.utils_idf_additionnal_strings import (
+    _write_surface_property_local_environment,
+    _write_surface_property_surrounding_surfaces,
+    _write_surface_temperature_schedule,
+    generate_surface_lwr_idf_additional_string,
+)
 
 
 class TestLwrIdfAdditionnalStrings:
-
     def test_write_surface_temperature_schedule(self):
         schedule_name = "Test_surrounding_surface_temp"
         init_temperature = 20
@@ -31,7 +30,8 @@ class TestLwrIdfAdditionnalStrings:
             context_surface_name=context_surface_name,
             cumulated_view_factor=cumulated_view_factor,
             context_surface_temperature_schedule=context_surface_temperature_schedule,
-            ground_temperature_schedule=ground_temperature_schedule)
+            ground_temperature_schedule=ground_temperature_schedule,
+        )
         print(additional_string)
 
     def test_write_surface_property_local_environment(self):
@@ -43,7 +43,8 @@ class TestLwrIdfAdditionnalStrings:
             surface_name=surface_name,
             surface_property_local_environment_name=surface_property_local_environment_name,
             surface_property_surrounding_surface_name=surface_property_surrounding_surface_name,
-            ground_surface_object_name=ground_surface_object_name)
+            ground_surface_object_name=ground_surface_object_name,
+        )
         print(additional_string)
 
     def test_write_surface_lwr_idf_additional_string(self):
@@ -55,5 +56,6 @@ class TestLwrIdfAdditionnalStrings:
             surface_name=surface_name,
             sky_view_factor=sky_view_factor,
             ground_view_factor=ground_view_factor,
-            cumulated_ext_surf_view_factor=cumulated_ext_surf_view_factor)
+            cumulated_ext_surf_view_factor=cumulated_ext_surf_view_factor,
+        )
         print(additional_string)

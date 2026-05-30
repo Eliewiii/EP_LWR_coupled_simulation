@@ -16,7 +16,7 @@ It includes the following addons for each outdoor surface:
 - one actuator for the context surface temperature schedule (to be called each time step)
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -53,7 +53,32 @@ class SurfaceAddStringConfig(BaseModel):
         return self
 
 
-def generate_surface_lwr_idf_additional_string(add_string_config: SurfaceAddStringConfig) -> str:
+def generate_idfs_additional_strings(
+    outdoor_surface_names: list[str],
+    srd_vf_list: list[float],
+    sky_vf_list: Optional[list[float]] = None,
+    ground_vf_list: Optional[list[float]] = None,
+) -> str:
+    """
+    Generate the additional strings to add to the IDF file for the LWR coupling.
+    Consist of the generation of a SurfaceProperty:LocalEnvironment and a SurfaceProperty:SurroundingSurfaces for each
+    outdoor surface, with temperature schedule for the surrounding surfaces to be actuated to account for the LWR.
+    :return:
+    """
+    additional_strings = ""
+    for i, surface_name in enumerate(outdoor_surface_names):
+        add_string_config = SurfaceAddStringConfig(
+            surface_name=surface_name,
+            cumulated_ext_surf_view_factor=srd_vf_list[i],
+            sky_view_factor=sky_vf_list[i] if sky_vf_list else None,
+            ground_view_factor=ground_vf_list[i] if ground_vf_list else None,
+        )
+        additional_strings += _generate_surface_lwr_idf_additional_string(add_string_config)
+
+    return additional_strings
+
+
+def _generate_surface_lwr_idf_additional_string(add_string_config: SurfaceAddStringConfig) -> str:
     """
     Generate the additional IDF string for a given surface based on the provided configuration.
     :param add_string_config: Configuration object containing all necessary parameters for string generation.
