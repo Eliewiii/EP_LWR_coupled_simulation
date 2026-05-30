@@ -1,4 +1,4 @@
-name: CI - Lint and Test
+name: CI - Lint, Type Integrity and Test
 
 on:
   push:
@@ -26,9 +26,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
           pip install -r requirements.txt
-
+      
+      # Linter
       - name: Run Linter (Ruff)
         run: ruff check .
-
+      # Type Checker
+      - name: Run Pyright Static Type Analyzer
+        uses: jakebailey/pyright-action@v2
+        with:
+          version: true
+      # Test Runner (Pytest)
       # - name: Run Tests (Pytest)
       #   run: pytest

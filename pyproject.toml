@@ -28,7 +28,7 @@ addopts = "-v --tb=short"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["src/lwrepcoupling/pyenergyplus/"]
+# extend-exclude = ["src/lwrepcoupling/pyenergyplus/"]
 
 [tool.ruff.lint]
 # E: Error, F: Pyflakes, B: Bugbear
@@ -38,3 +38,9 @@ ignore = []
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pyright]
+typeCheckingMode = "basic" # Perfect balance for scientific computing pipelines
+reportMissingTypeStubs = false # Silences errors from legacy packages without stubs
+reportInvalidTypeVarUse = "error"
+reportGeneralTypeIssues = "error"

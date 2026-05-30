@@ -52,7 +52,7 @@ class SimulationInputs(BaseModel):
         workspace_dir: Target root directory path for the simulation workspace.
         energyplus_dir: Path to the local EnergyPlus installation directory.
         epw_path: Path to the raw source weather (EPW) file.
-        time_step: Core simulation time step fraction (e.g., 0.25).
+        num_ts_per_h: Number of simulation time steps per hour, as defined in the EnergyPlus IDF.
         vf_matrix_path: Path to the computed View Factor sparse matrix file.
         eps_matrix_path: Path to the computed Emissivity surface vector file.
         rho_matrix_path: Path to the computed Reflectivity surface matrix file.
@@ -64,7 +64,7 @@ class SimulationInputs(BaseModel):
     workspace_dir: DirectoryPath
     energyplus_dir: DirectoryPath
     epw_path: FilePath
-    time_step: int
+    num_ts_per_h: int
 
     vf_matrix_path: FilePath
     eps_matrix_path: FilePath
@@ -178,7 +178,7 @@ class SimulationManifest(BaseModel):
         workspace_dir: The active absolute path hosting the workspace root.
         energyplus_dir: System path to the targeted EnergyPlus installation.
         epw_file_name: Local filename string of the workspace weather asset.
-        time_step: EnergyPlus simulation number of time steps per minute.
+        num_ts_per_h: EnergyPlus simulation number of time steps per minute.
         num_outdoor_surfaces: Overall global surface boundary array dimension.
         compiled_buildings: Catalog mapping sequence indexes to worker entities.
     """
@@ -192,7 +192,7 @@ class SimulationManifest(BaseModel):
     workspace_dir: Path
     energyplus_dir: Path
     epw_file_name: str
-    time_step: int
+    num_ts_per_h: int
     num_total_surfaces: int
 
     compiled_buildings: list[CompiledBuildingState]

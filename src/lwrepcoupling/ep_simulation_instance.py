@@ -7,20 +7,21 @@ import logging
 import pickle
 import shutil
 import sys
+from math import ceil, floor
 from multiprocessing import shared_memory
 from multiprocessing.synchronize import Barrier as MpBarrier
 from pathlib import Path
 from threading import BrokenBarrierError
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import numpy as np
+from pyenergyplus.api import EnergyPlusAPI
 
 from .lwr_idf_additionnal_strings import (
     SurfaceAddStringConfig,
     generate_surface_lwr_idf_additional_string,
     name_surrounding_surface_temperature_schedule,
 )
-from .pyenergyplus.api import EnergyPlusAPI
 from .schemas import BuildingInput, CompiledBuildingState
 
 logger = logging.getLogger(__name__)
@@ -34,15 +35,27 @@ class EpSimulationBlueprint:
     the workspace preprocessing pipeline phase.
     """
 
+    # 1. Primary Identification & Context Metrics
+    identifier: str
+    simulation_index: int
+
+    # 2. Shared Memory Slice Bounds (Index Markers)
+    surface_index_min: int
+    surface_index_max: int
+
+    # 3. Geometry Mapping Metadata & Numerical Processing Matrices
+    outdoor_surface_names: list[str]
+    resolution_mtx: np.ndarray
+
     def __init__(
         self,
         identifier: str,
         simulation_index: int,
         surface_index_min: int,
         surface_index_max: int,
-        outdoor_surface_names: List[str],
+        outdoor_surface_names: list[str],
         resolution_mtx: np.ndarray,
-    ):
+    ) -> None:
         self.identifier = identifier
 
         # Synchronization properties
@@ -112,7 +125,6 @@ class EpSimulationBlueprint:
         resolution_mtx: np.ndarray,
         srd_vf_list: List[float],
         runs_dir: Path,
-        pkl_file_path: Path,
         sky_vf_list: Optional[List[float]] = None,
         ground_vf_list: Optional[List[float]] = None,
     ) -> None:
@@ -138,8 +150,6 @@ class EpSimulationBlueprint:
                 built surfaces for each outdoor boundary.
             runs_dir: The target absolute directory path where the simulation of all buildings will
             be executed (e.g., /path/to/workspace/runs/).
-            pkl_file_path: The target absolute destination path where the binary blueprint
-                token should be saved (e.g., /path/to/workspace/runs/building_0.pkl).
             sky_vf_list: Optional list of float view factors to the open sky vault.
                 Defaults to None.
             ground_vf_list: Optional list of float view factors to the localized terrain ground.
@@ -247,24 +257,50 @@ class EpSimulationRuntimeWorker:
     here or delegated smoothly to the blueprint via properties.
     """
 
+    # 1. Structural Dependency Types
+    _blueprint: EpSimulationBlueprint
+    _synch_point_barrier: MpBarrier
+
+    # 2. Foreign C-API State Management Types
+    _api: EnergyPlusAPI
+    _state: Any
+
+    # 3. Shared Memory Buffer Views (Crucial for Matrix Safety!)
+    _shm_temp: shared_memory.SharedMemory
+    _shared_array_temperature: np.ndarray
+
+    _shm_time: shared_memory.SharedMemory
+    _shared_array_timestep: np.ndarray
+
+    # 4. Runtime C++ Handle Tracking Containers (Explicitly typed lists)
+    _schedule_actuator_handle_list: list[int]
+    _surface_temp_handler_list: list[int]
+    _surrounding_surface_temperature_schedule_temperature_handler_list: list[int]
+
+    # 5. Core Numerical Simulation Metrics & Inverses
+    _num_ts_per_h: int
+    _time_step: float
+
+    # 6. Stateful Workflow Flags
+    _warmup_started: bool
+    _warmup_done: bool
+
     def __init__(
         self,
         blueprint: EpSimulationBlueprint,
         energyplus_dir: Path,
-        time_step: int,
+        num_ts_per_h: int,
         num_buildings: int,
         num_total_surfaces: int,
         shared_memory_temperatures_name: str,
         shared_memory_timesteps_name: str,
         synch_point_barrier: MpBarrier,
-    ):
+    ) -> None:  # __init__ always returns None
         # 1. Store the underlying data blueprint configuration
         self._blueprint = blueprint
 
         # 2. IMMEDIATELY initialize volatile runtime attributes (No more '= None')
-        self._api = EnergyPlusAPI(
-            running_as_python_plugin=True, path_to_ep_folder=str(energyplus_dir)
-        )
+        self._api = EnergyPlusAPI(running_as_python_plugin=True)
         self._state = self._api.state_manager.new_state()
 
         # 3. IMMEDIATELY bind to operating system shared memory
@@ -280,16 +316,17 @@ class EpSimulationRuntimeWorker:
 
         self._synch_point_barrier = synch_point_barrier
 
-        # 4. Runtime state lists that grow during execution
-        self._schedule_actuator_handle_list: list = []
-        self._surface_temp_handler_list: list = []
-        self._surrounding_surface_temperature_schedule_temperature_handler_list: list = []
+        # 4. Runtime state lists that grow during execution (Using specific type lists)
+        self._schedule_actuator_handle_list = []
+        self._surface_temp_handler_list = []
+        self._surrounding_surface_temperature_schedule_temperature_handler_list = []
 
         # Runtime Tracking Flags
         self._warmup_started = False
         self._warmup_done = False
 
-        self._time_step = time_step
+        self._num_ts_per_h = num_ts_per_h
+        self._time_step = 1.0 / num_ts_per_h
 
     # -----------------------------------------------------------------
     # PROPERTY DELEGATION ZONE
@@ -329,7 +366,7 @@ class EpSimulationRuntimeWorker:
         *,
         epw_path: Path,
         energyplus_dir: Path,
-        time_step: int,
+        num_ts_per_h: int,
         output_dir: Path,
         idf_path: Path,
         num_buildings: int,
@@ -349,7 +386,7 @@ class EpSimulationRuntimeWorker:
             worker = cls(
                 blueprint=blueprint,
                 energyplus_dir=energyplus_dir,
-                time_step=time_step,
+                num_ts_per_h=num_ts_per_h,
                 num_buildings=num_buildings,
                 num_total_surfaces=num_total_surfaces,
                 shared_memory_temperatures_name=shared_memory_temperatures_name,
@@ -378,18 +415,22 @@ class EpSimulationRuntimeWorker:
     ) -> int:
         """Hooks up closures and runs the compiled C++ engine loop."""
 
+        # 1- Set up the callback functions to be triggered at the right moments during the simulation loop
         logging.info("Starting EnergyPlus simulation for building [%s]", self.identifier)
 
         self._request_variables_before_running_simulation()
 
         self._api.runtime.callback_begin_new_environment(
-            self._state, self._initialize_actuator_handler_callback_function
+            self._state,
+            self._initialize_actuator_handler_callback_function,  # type: ignore
         )
         self._api.runtime.callback_begin_new_environment(
-            self._state, self._init_surface_temperature_handlers_call_back_function
+            self._state,
+            self._init_surface_temperature_handlers_call_back_function,  # type: ignore
         )
         self._api.runtime.callback_end_zone_timestep_after_zone_reporting(
-            self._state, self._coupled_simulation_callback_function
+            self._state,
+            self._coupled_simulation_callback_function,  # type: ignore
         )
 
         try:
@@ -397,6 +438,7 @@ class EpSimulationRuntimeWorker:
         except BrokenBarrierError:
             sys.exit(1)
 
+        # 2- Run the simulation in EnergyPlus native C++ runtime loop, with the callbacks now hooked up and ready to go
         try:
             logger.info("Launching EnergyPlus engine for building: %s", self.identifier)
             # Run native C++ engine loop
@@ -493,18 +535,10 @@ class EpSimulationRuntimeWorker:
                 )
             )
 
-    # ------------------------------#
-    # --- Main Callback Function ---#
-    # ------------------------------#
-    def _coupled_simulation_callback_function(
-        self,
-        state,
-        shared_array,
-        shared_array_timestep,
-        shared_memory_lock,
-        synch_point_barrier,
-        time_step: float,
-    ):
+    # ---------------------------------------------------#
+    # --- Main Callback Function and helper functions ---#
+    # ---------------------------------------------------#
+    def _coupled_simulation_callback_function(self):
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
         This function is a test version that will not perform the LWR computation but will write the surface temperatures and update the schedules
@@ -515,24 +549,26 @@ class EpSimulationRuntimeWorker:
         # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
         if not self._schedule_actuator_handle_list:
             return
-        current_time = self._api.exchange.current_sim_time(state)
+        current_time = self._api.exchange.current_sim_time(self._state)
 
         if not self._warmup_started:
             self._warmup_started = True
             return
         if not self._warmup_done:
-            if np.isclose(current_time, time_step, rtol=1e-01, atol=1e-02) or (
-                2 * time_step > current_time > time_step
+            if np.isclose(current_time, self._time_step, rtol=1e-01, atol=1e-02) or (
+                2 * self._time_step > current_time > self._time_step
             ):
                 self._warmup_done = True
             else:
                 return
         # Get the surface temperatures of all the surfaces
-        surface_temperatures_list = self.get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
+        surface_temperatures_list = (
+            self._get_surface_temperature_of_all_outdoor_surfaces_in_kelvin()
+        )
 
         try:
             # Wait for all other buildings to catch up to this timestep
-            synch_point_barrier.wait()
+            self._synch_point_barrier.wait()
         except BrokenBarrierError:
             logger.warning(
                 "Simulation synchronization grid collapsed due to a sister process crash. "
@@ -542,18 +578,15 @@ class EpSimulationRuntimeWorker:
             sys.exit(1)
 
         # write down the surface temperatures the shared memory
-        with shared_memory_lock:
-            # todo: need to indicated properly the start and end index of the shared memory
-            # Here we are writing the list as a slice of the shared memory
-            np.copyto(
-                shared_array[self._surface_index_min : self._surface_index_max + 1],
-                np.array(surface_temperatures_list) ** 4,
-            )  # directly give the temperatures power 4
+        np.copyto(
+            self._shared_array_temperature[self.surface_index_min : self.surface_index_max + 1],
+            np.array(surface_temperatures_list) ** 4,
+        )  # directly give the temperatures power 4
 
-            np.copyto(
-                shared_array_timestep[self._simulation_index : self._simulation_index + 1],
-                np.array([current_time]),
-            )
+        np.copyto(
+            self._shared_array_timestep[self.simulation_index],
+            np.array([current_time]),
+        )
 
         try:
             """
@@ -561,7 +594,7 @@ class EpSimulationRuntimeWorker:
             If another process has crashed, the barrier will be broken and a BrokenBarrierError will 
             be raised, which is caught to exit the process cleanly instead of hanging.
             """
-            synch_point_barrier.wait()
+            self._synch_point_barrier.wait()
         except BrokenBarrierError:
             logger.warning(
                 "Simulation synchronization grid collapsed due to a sister process crash. "
@@ -570,13 +603,13 @@ class EpSimulationRuntimeWorker:
             # Perform any local cleanup if needed, then exit the process orderly
             sys.exit(1)
 
-        if self._simulation_index == 0:
+        if self.simulation_index == 0:
             # Compute timestep indices by rounding to nearest integer
             floor_timestep_indices = [
-                math.floor(round(ts, 4) / time_step) for ts in shared_array_timestep
+                floor(round(ts, 4) * self._num_ts_per_h) for ts in self._shared_array_timestep
             ]
             ceil_timestep_indices = [
-                math.ceil(round(ts, 4) / time_step) for ts in shared_array_timestep
+                ceil(round(ts, 4) * self._num_ts_per_h) for ts in self._shared_array_timestep
             ]
             # Check that all indices are the same
             if (
@@ -585,17 +618,55 @@ class EpSimulationRuntimeWorker:
             ):
                 raise ValueError(
                     f"Timestep mismatch between simulations:\n"
-                    f"timesteps: {shared_array_timestep}\n"
+                    f"timesteps: {self._shared_array_timestep}\n"
                 )
-            if shared_array_timestep[0] % int(24) == 0:
-                print(f"Current day: {int(shared_array_timestep[0] // 24)}")
+            if self._shared_array_timestep[0] % int(24) == 0:
+                print(f"Current day: {int(self._shared_array_timestep[0] // 24)}")
 
-        # Compute a somewhat mean surface temperature, to test the synchronization, only one surface per building will be used
-        list_srd_mean_radiant_temperature_in_c = self.compute_srd_mean_radiant_temperatures_in_c(
-            temperature_p4_vector=shared_array
+        # Compute the equivalent surrounding surface temperature in Celsius for each outdoor surface
+        list_srd_mean_radiant_temperature_in_c = self._compute_srd_sur_eq_temp_in_c(
+            temp_k_p4_vector=self._shared_array_temperature
         )  # convert back to Celsius
-        # Set the surrounding surface temperature to the average of the surface temperatures
+
+        # Set the equivalent surrounding surface temperature
         for i, srd_mrt in enumerate(list_srd_mean_radiant_temperature_in_c):
             self._api.exchange.set_actuator_value(
-                state, self._schedule_actuator_handle_list[i], srd_mrt
+                self._state, self._schedule_actuator_handle_list[i], srd_mrt
             )
+
+    def _get_surface_temperature_of_all_outdoor_surfaces_in_kelvin(self) -> List[float]:
+        """
+        Reads the surface temperature of all the outdoor surfaces and store them in a list.
+        :return: list,  List of surface temperatures
+        """
+        surface_temperatures_list = []
+        for i, _ in enumerate(self.outdoor_surface_names):
+            surface_temperatures_list.append(
+                self._api.exchange.get_variable_value(
+                    self._state, self._surface_temp_handler_list[i]
+                )
+                + 273.15
+            )  # convert to Kelvin
+        return surface_temperatures_list
+
+    def _compute_srd_sur_eq_temp_in_c(self, temp_k_p4_vector: np.ndarray) -> List[float]:
+        """
+        Compute the equivalent surrounding surface temperature for each outdoor surface, using the view factors and the resolution matrix.
+
+        Args:
+            temp_k_p4_vector: np.ndarray, vector of the surface temperatures in Kelvin to the power 4
+        Returns:
+            list of the equivalent surrounding surface temperatures in Celsius
+
+        """
+
+        # TODO: factorize the expression to avaoid unnecessary computations, need to adjust the resolution matrix expression slightly to do so
+
+        return (
+            np.power(
+                temp_k_p4_vector.T[self.surface_index_min : self.surface_index_max + 1]
+                - self.resolution_mtx @ temp_k_p4_vector.T,
+                1 / 4,
+            )
+            - 273.15
+        ).tolist()

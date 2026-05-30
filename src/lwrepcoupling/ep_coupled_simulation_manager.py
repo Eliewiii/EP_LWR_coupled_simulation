@@ -2,663 +2,468 @@
 Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus among multiple buildings.
 """
 
-import json
-import os
-import pickle
-import subprocess
+import logging
+import shutil
 import sys
-from multiprocessing import Manager, Process, shared_memory
+import time
+from multiprocessing import Manager, Process, get_context, shared_memory
 from pathlib import Path
-from typing import List
+from typing import NamedTuple
 
 import numpy as np
-from pydantic import BaseModel
+from scipy.sparse import save_npz
 
-from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
+from .ep_simulation_instance import EpSimulationBlueprint
+from .schemas import CompiledBuildingState, SimulationInputs, SimulationManifest
 from .utils import (
-    check_inversion_parameters,
     check_matrices,
     compute_resolution_matrices,
-    create_dir,
     read_csr_matrices_from_npz,
 )
+from .utils.utils_io import WorkspaceConflictError, assert_path_is_safe_for_purging
+
+logger = logging.getLogger(__name__)
 
 
-class CompiledBuildingState(BaseModel):
+class WorkerTracker(NamedTuple):
+    """Local tracking container to monitor active simulation child processes."""
+
     building_id: str
     building_index: int
-    path_idf: Path
-    path_instance_pkl: Path
-    min_surface_index: int
-    max_surface_index: int
+    process: Process
 
 
-class SimulationManifest(BaseModel):
-    workspace_dir: Path
-    energyplus_dir: Path
-    epw_file: Path
-    time_step: float
-    num_outdoor_surfaces: int
-
-    compiled_buildings: list[CompiledBuildingState]
+class SimulationCrashError(RuntimeError):
+    """Raised when the isolated long-wave radiation simulation crashes."""
 
 
 class EpLwrSimulationManager:
-    # Constants
-    CONFIG_FILE_NAME = "ep_lwr_sim_man_config.json"
-    CONFIG_BUILDING_ID_LIST = "building_id_list"
-    CONFIG_BUILDING_ID = "building_id"
-    CONFIG_PATH_IDF = "path_idf"
-    CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID = "list_outdoor_surface_name"
-    CONFIG_NUM_OUTDOOR_SURFACES = "num_outdoor_surfaces"
-    CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING = "num_outdoor_surfaces_per_building"
-    # Config matrices
-    CONFIG_KEY_PATH_VF_MTX = "vf_mtx"
-    CONFIG_KEY_PATH_EPS_MTX = "eps_mtx"
-    CONFIG_KEY_PATH_RHO_MTX = "rho_mtx"
-    CONFIG_KEY_PATH_TAU_MTX = "tau_mtx"
-    # Config matrix inversion parameters
-    CONFIG_KEY_INV_PARA = "inv_parameters"
-    # Sim
-    CONFIG_KEY_PATH_OUT_DIR = "path_output"
-    CONFIG_KEY_PATH_EP = "path_folder_EnergyPlus"
-    CONFIG_KEY_PATH_EPW = "path_epw"
-    CONFIG_KEY_TIME_STEP = "time_step"
+    """Manages the execution lifecycle of the coupled long-wave radiation (LWR) simulation
+    with EnergyPlus.
 
-    EP_SIM_PARA_DICT_UNIT_DEFAULT = {"path_idf": None}
+    This coordinator acts as the central execution manager, encapsulating the
+    underlying configuration manifest, orchestrating parallel solver processes,
+    and enforcing boundary validation rules during numerical iterations.
 
-    # -----------------------------------------------------#
-    # -------------------- Initialization------------------#
-    # -----------------------------------------------------#
 
-    def __init__(self):
-        """
-        Initialize the EnergyPlus simulation manager for the coupled long-wave radiation (LWR) simulation.
-        :param path_output_dir: Path to the output directory, where the simulation will be run. It can be either
-         an existing empty directory or a new directory that will be created.
-        :param path_epw: Path to the EPW (weather) file for the simulation.
-        :param path_energyplus_dir: Path to the EnergyPlus directory, where the EnergyPlus executable is located.
-        """
-        # Simulation
-        self._building_id_list = []
-        self._building_id_to_path_pkl_dict = {}
-        # Paths to the output directory, EPW file, and EnergyPlus directory
-        self._path_output_dir = None
-        self._path_epw = None
-        self._path_energyplus_dir = None
-        #
-        self._num_outdoor_surfaces = 0
-        self._time_step = None
 
-    def _set_paths_attributes(self, path_output_dir: str, path_epw: str, path_energyplus_dir: str):
-        """
-        Set the paths to the output directory, EPW file, and EnergyPlus directory.
-        :param path_output_dir:
-        :param path_epw:
-        :param path_energyplus_dir:
-        """
-        # Check if the EPW file exists
-        if not os.path.exists(path_epw):
-            raise FileNotFoundError(f"EPW file not found at {path_epw}")
-        self._path_epw = path_epw
-        # Check if energyplus directory exists
-        if not os.path.exists(path_energyplus_dir):
-            raise FileNotFoundError(
-                f"EnergyPlus directory not found at {path_energyplus_dir}.\n"
-                f"Check if the path is correct. You might have a different verison of EnergyPlus."
-            )
-        self._path_energyplus_dir = path_energyplus_dir
-        # Check if the output directory exists
-        if not os.path.exists(path_output_dir):
-            os.makedirs(path_output_dir)
-            print(f"Output directory created at {path_output_dir}")
-        # Check if not empty
-        elif not os.listdir(path_output_dir):
-            pass
-        else:
-            raise FileExistsError(
-                f"Output directory already exists at {path_output_dir} and is not empty. Please empty it or choose another directory."
-            )
-        self._path_output_dir = path_output_dir
+    Attributes:
+    """
 
-    def _add_building_to_dict(self, building_id: str, path_to_pkl: str):
-        """
-
-        :param building_id:
-        :param path_to_pkl:
-        :return:
-        """
-
-        self._building_id_list.append(building_id)
-        self._building_id_to_path_pkl_dict[building_id] = path_to_pkl
-
-    # -----------------------------------------------------#
-    # --------------------- Properties --------------------#
-    # -----------------------------------------------------#
+    def __init__(self, manifest: SimulationManifest):
+        self._manifest = manifest
 
     @property
-    def path_output_dir(self) -> str:
-        """Read-only property for the output directory path."""
-        return self._path_output_dir
+    def workspace_dir(self) -> Path:
+        """The absolute path to the active simulation environment."""
+        return self._manifest.workspace_dir
 
     @property
-    def path_epw(self) -> str:
-        """Read-only property for the EPW file path."""
-        return self._path_epw
+    def energyplus_dir(self) -> Path:
+        """The absolute path to the EnergyPlus installation directory."""
+        return self._manifest.energyplus_dir
 
     @property
-    def path_energyplus_dir(self) -> str:
-        """Read-only property for the EnergyPlus directory path."""
-        return self._path_energyplus_dir
+    def epw_path(self) -> Path:
+        """The path to the weather file used in the simulation."""
+        return self._manifest.epw_path
 
     @property
-    def num_building(self):
-        return len(self._building_id_list)
+    def num_ts_per_h(self) -> int:
+        """The time step used in the simulation."""
+        return self._manifest.num_ts_per_h
 
     @property
-    def num_outdoor_surfaces(self):
-        return self._num_outdoor_surfaces
+    def num_buildings(self) -> int:
+        """The total number of buildings assigned to this simulation run."""
+        return self._manifest.num_buildings
 
     @property
-    def time_step(self):
-        return self._time_step
+    def num_total_surfaces(self) -> int:
+        """The total global size of the shared-memory array allocation."""
+        return self._manifest.num_total_surfaces
 
-    # @property
-    # def path_output_dir(self) -> Path:
-    #     return self.manifest.workspace_dir
-
-    # @property
-    # def path_epw(self) -> Path:
-    #     return self.manifest.epw_file
-
-    # @property
-    # def num_building(self) -> int:
-    #     return len(self.manifest.compiled_buildings)
-
-    # @property
-    # def num_outdoor_surfaces(self) -> int:
-    #     return self.manifest.num_outdoor_surfaces
-
-    # @property
-    # def time_step(self) -> float:
-    #     return self.manifest.time_step
-
-    # -----------------------------------------------------#
-    # -------------- Export and Import --------------------#
-    # -----------------------------------------------------#
-
-    def to_pkl(self, path_folder: str, file_name: str = None, get_path_only: bool = False) -> str:
-        """
-        Save the instance to a pickle file.
-        :param path_folder: str, the folder path where the pickle file will be saved.
-        :param file_name: str, the name of the pickle file.
-        :param get_path_only: bool, if True, return the path of the pickle file only, if False, save the instance to the
-        pickle file and return the path.
-        """
-        if file_name is None:
-            file_name = "ep_lwr_simulation_manager.pkl"
-        path_pkl_file = os.path.join(path_folder, file_name)
-        if not get_path_only:
-            with open(path_pkl_file, "wb") as f:
-                pickle.dump(self, f)
-        return path_pkl_file
+    @property
+    def buildings(self) -> list[CompiledBuildingState]:
+        """The list of building identifiers included in this simulation."""
+        return self._manifest.compiled_buildings
 
     @classmethod
-    def from_pkl(cls, path_pkl_file: str) -> "EpLwrSimulationManager":
+    def compile_and_initialize_workspace(
+        cls, inputs: SimulationInputs, overwrite: bool = False
+    ) -> "EpLwrSimulationManager":
+        """Consumes raw simulation inputs and structurally generates the disk workspace.
+
+        Args:
+            inputs: Structured configuration container holding path anchors.
+            overwrite: If True, explicitly allows clearing out an existing,
+                non-empty workspace folder if it passes fingerprint validation.
+
+        Returns:
+            An initialized instance of the simulation manager engine.
+
+        Raises:
+            SecurityViolationError: If the target path threatens OS or root safety.
+            WorkspaceConflictError: If the folder is occupied and overwrite is disabled
+                or if the folder fails structural fingerprint verification.
         """
-        Load a RadiativeSurfaceManager object from a pickle file.
-        :param path_pkl_file: str, the path of the pickle file.
-        :return: RadiativeSurfaceManager, the RadiativeSurfaceManager object.
-        """
-        if not os.path.isfile(path_pkl_file):
-            raise FileNotFoundError(f"File not found: {path_pkl_file}")
-        with open(path_pkl_file, "rb") as f:
-            ep_simulation_instance = pickle.load(f)
-        if not isinstance(ep_simulation_instance, cls):
-            raise TypeError(f"Expected {cls}, but got {type(ep_simulation_instance)}")
-
-        return ep_simulation_instance
-
-    # -----------------------------------------------------#
-    # --------------------- Config file -------------------#
-    # -----------------------------------------------------#
-
-    @classmethod
-    def make_config_file(
-        cls,
-        path_dir_config: str,
-        path_dir_outputs: str,
-        path_epw_file: str,
-        path_energyplus_dir: str,
-        list_building_id: List[str],
-        list_path_idf_file: List[str],
-        list_of_list_outdoor_surface_name: List[List[str]],
-        path_vf_mtx_crs_npz: str,
-        path_eps_mtx_crs_npz: str,
-        path_rho_mtx_crs_npz: str,
-        path_tau_mtx_crs_npz: str,
-        time_step: float,
-        **kwargs,
-    ) -> str:
-        """
-
-        :param path_dir_config:
-        :param path_dir_outputs:
-        :param path_epw_file:
-        :param path_energyplus_dir:
-        :param list_building_id:
-        :param list_path_idf_file:
-        :param list_of_list_outdoor_surface_name:
-        :param path_vf_mtx_crs_npz:
-        :param path_eps_mtx_crs_npz:
-        :param path_rho_mtx_crs_npz:
-        :param path_tau_mtx_crs_npz:
-        :param time_step:
-        :param kwargs:
-        :return:
-        """
-
-        # Ensure the configuration directory exists
-        if not os.path.exists(path_dir_config):
-            raise FileNotFoundError(
-                f"The configuration directory '{path_dir_config}' does not exist."
-            )
-        # Generate the dictionary
-        config_dict = cls.make_config_dict(
-            path_dir_outputs=path_dir_outputs,
-            path_epw_file=path_epw_file,
-            path_energyplus_dir=path_energyplus_dir,
-            list_building_id=list_building_id,
-            list_path_idf_file=list_path_idf_file,
-            list_of_list_outdoor_surface_name=list_of_list_outdoor_surface_name,
-            path_vf_mtx_crs_npz=path_vf_mtx_crs_npz,
-            path_eps_mtx_crs_npz=path_eps_mtx_crs_npz,
-            path_rho_mtx_crs_npz=path_rho_mtx_crs_npz,
-            path_tau_mtx_crs_npz=path_tau_mtx_crs_npz,
-            time_step=time_step,
-            **kwargs,
+        # 1. Validate and prepare the target workspace directory, enforcing safety and exclusivity guardrails
+        cls._make_target_workspace_dir(
+            target_workspace_dir=inputs.workspace_dir, overwrite=overwrite
         )
-        # Define the path to the output configuration file
-        path_config_file = os.path.join(path_dir_config, cls.CONFIG_FILE_NAME)
+        working_dir = inputs.workspace_dir.resolve()  # For easier reference in the next steps
 
-        # Save the configuration dictionary as a JSON file
-        with open(path_config_file, "w") as f:
-            json.dump(config_dict, f, indent=4)
-
-        return path_config_file
-
-    @classmethod
-    def make_config_dict(
-        cls,
-        path_dir_outputs: str,
-        path_epw_file: str,
-        path_energyplus_dir: str,
-        list_building_id: List[str],
-        list_path_idf_file: List[str],
-        list_of_list_outdoor_surface_name: List[List[str]],
-        path_vf_mtx_crs_npz: str,
-        path_eps_mtx_crs_npz: str,
-        path_rho_mtx_crs_npz: str,
-        path_tau_mtx_crs_npz: str,
-        time_step: float,
-        **kwargs,
-    ) -> str:
-        """
-        Creates a JSON configuration file for the LWR-EP coupled simulation manager.
-
-        This method ensures that all required input files and directories exist before
-        generating the configuration file. It also validates and integrates optional
-        parameters related to the GMRES-based matrix inversion method.
-
-        :param path_dir_outputs: Path to the directory where the simulation outputs will be stored.
-        :param path_epw_file: Path to the EPW weather file required for the EnergyPlus simulation.
-        :param path_energyplus_dir: Path to the directory containing EnergyPlus.
-        :param list_building_id: List of building IDs.
-        :param list_path_idf_file: List of paths to the IDF (EnergyPlus) files.
-        :param list_of_list_outdoor_surface_name: List of lists containing outdoor surface names per building.
-        :param path_vf_mtx_crs_npz: Path to the view factor matrix in compressed sparse format.
-        :param path_eps_mtx_crs_npz: Path to the emissivity matrix in compressed sparse format.
-        :param path_rho_mtx_crs_npz: Path to the reflectivity matrix in compressed sparse format.
-        :param path_tau_mtx_crs_npz: Path to the transmissivity matrix in compressed sparse format.
-        :param time_step: Time step for the simulation in hours
-        :param kwargs: Optional parameters for the GMRES-based matrix inversion method.
-            - **tol** (float, optional): Overall inverse tolerance (default: 1e-5, valid range: 1e-10 to 1e-2).
-            - **maxiter** (int, optional): Maximum number of iterations (default: 150, valid range: 1 to 1000).
-            - **rtol** (float, optional): Relative tolerance within iterations on columns  (default: 5e-7, valid range: 1e-10 to 1e-5).
-            - **precondition** (bool, optional): Whether to apply preconditioning (default: False).
-            - **num_workers** (int, optional): Number of parallel workers (default: 0, valid range: 0 to 64).
-
-        :return: Path to the generated configuration file.
-        :raises FileNotFoundError: If required directories or files do not exist.
-        :raises ValueError: If invalid parameters are provided in `kwargs`.
-
-        Example usage:
-        ```
-        EpLwrSimulationManager.make_config_file(
-            path_dir_config="config/",
-            path_dir_outputs="outputs/",
-            path_epw_file="weather.epw",
-            path_energyplus_dir="/usr/local/EnergyPlus/",
-            list_building_id=["B1", "B2"],
-            list_path_idf_file=["building1.idf", "building2.idf"],
-            list_of_list_outdoor_surface_name=[["surf1", "surf2"], ["surf3"]],
-            path_vf_mtx_crs_npz="vf_matrix.npz",
-            path_eps_mtx_crs_npz="eps_matrix.npz",
-            path_rho_mtx_crs_npz="rho_matrix.npz",
-            path_tau_mtx_crs_npz="tau_matrix.npz",
-            time_step=20,
-            tol=1e-6, maxiter=200  # Optional kwargs
+        # 2. Check EnergyPlus directory and EPW file existence and move the EPW file into the workspace
+        epw_file_name = inputs.epw_path.name
+        path_epw_in_workspace = SimulationManifest.derive_epw_path(
+            workspace_dir=working_dir, epw_file_name=epw_file_name
         )
-        ```
-        """
+        shutil.copy(inputs.epw_path, path_epw_in_workspace)
 
-        # Validate that all IDF files exist
-        for path_idf in list_path_idf_file:
-            if not os.path.exists(path_idf):
-                raise FileNotFoundError(f"The IDF file '{path_idf}' does not exist.")
+        # 3. Make the runs directory to hold the building subfolders
+        runs_dir = SimulationManifest.derive_runs_dir(working_dir)
+        runs_dir.mkdir(exist_ok=False)
 
-        # Construct the configuration dictionary
-        config_dict = {
-            building_id: {
-                cls.CONFIG_BUILDING_ID: building_id,
-                cls.CONFIG_PATH_IDF: path_idf,
-                cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID: list_outdoor_surface_name,
-                cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING: len(list_outdoor_surface_name),
-            }
-            for building_id, path_idf, list_outdoor_surface_name in zip(
-                list_building_id,
-                list_path_idf_file,
-                list_of_list_outdoor_surface_name,
-                strict=False,
-            )
-        }
-
-        # Add global configuration settings
-        config_dict[cls.CONFIG_BUILDING_ID_LIST] = list_building_id
-        config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES] = sum(
-            len(lst) for lst in list_of_list_outdoor_surface_name
-        )
-        config_dict[cls.CONFIG_KEY_PATH_OUT_DIR] = path_dir_outputs
-        # Matrices
-        config_dict[cls.CONFIG_KEY_PATH_VF_MTX] = path_vf_mtx_crs_npz
-        config_dict[cls.CONFIG_KEY_PATH_EPS_MTX] = path_eps_mtx_crs_npz
-        config_dict[cls.CONFIG_KEY_PATH_RHO_MTX] = path_rho_mtx_crs_npz
-        config_dict[cls.CONFIG_KEY_PATH_TAU_MTX] = path_tau_mtx_crs_npz
-        config_dict[cls.CONFIG_KEY_INV_PARA] = check_inversion_parameters(**kwargs)
-
-        config_dict[cls.CONFIG_KEY_PATH_EP] = path_energyplus_dir  # Added EnergyPlus directory
-        config_dict[cls.CONFIG_KEY_PATH_EPW] = path_epw_file  # Added EPW file path
-        config_dict[cls.CONFIG_KEY_TIME_STEP] = time_step
-
-        return config_dict
-
-    @staticmethod
-    def _load_config_file(path_config_file: str) -> dict:
-        """
-        Loads a configuration file in JSON format.
-
-        :param path_config_file: The path to the configuration file.
-        :return: A dictionary containing the configuration data.
-        :raises FileNotFoundError: If the file does not exist.
-        """
-        # Check if the file exists
-        if not os.path.exists(path_config_file):
-            raise FileNotFoundError(f"The config file {path_config_file} does not exist")
-
-        # Load the config file as a dictionary
-        with open(path_config_file, "r") as f:
-            config_dict = json.load(f)
-
-        return config_dict
-
-    @classmethod
-    def set_up_coupled_lwr_simulation_from_config_file(
-        cls, path_config_file: str, to_pkl: bool = False
-    ):
-        # Load configuration
-        config_dict = cls._load_config_file(path_config_file=path_config_file)
-
-        return cls.set_up_coupled_lwr_simulation_from_config_dict(
-            config_dict=config_dict, to_pkl=to_pkl
-        )
-
-    @classmethod
-    def set_up_coupled_lwr_simulation_from_config_dict(
-        cls, config_dict: dict, to_pkl: bool = False
-    ):
-        """
-        Initializes an EpLwrSimulationManager instance from a configuration file.
-
-        This method loads the simulation configuration, validates required matrices,
-        and initializes individual EpSimulationInstance objects for each building.
-        The simulation instances are serialized into .pkl files for independent
-        execution in parallel processes.
-
-        :param config_dict: Dictionary containing the simulation configuration.
-        :param to_pkl: If True, saves the initialized EpCoupledSimulationManager instance as a .pkl file.
-        :return: Initialized EpCoupledSimulationManager instance.
-        :raises FileNotFoundError: If the configuration file is missing.
-        :raises KeyError: If expected configuration keys are missing.
-        :raises ValueError: If matrix dimensions do not match the expected number of outdoor surfaces.
-        """
-
-        # Initialize the simulation manager
-        sim_manager = cls()
-        sim_manager._set_paths_attributes(
-            path_output_dir=config_dict[cls.CONFIG_KEY_PATH_OUT_DIR],
-            path_epw=config_dict[cls.CONFIG_KEY_PATH_EPW],
-            path_energyplus_dir=config_dict[cls.CONFIG_KEY_PATH_EP],
-        )
-
-        # Load and validate simulation matrices
+        # 4. Use the temporary raw path inputs to load the heavy arrays into memory
         vf_mtx, eps_mtx, rho_mtx, tau_mtx = read_csr_matrices_from_npz(
-            config_dict[cls.CONFIG_KEY_PATH_VF_MTX],
-            config_dict[cls.CONFIG_KEY_PATH_EPS_MTX],
-            config_dict[cls.CONFIG_KEY_PATH_RHO_MTX],
-            config_dict[cls.CONFIG_KEY_PATH_TAU_MTX],
+            inputs.vf_matrix_path,
+            inputs.eps_matrix_path,
+            inputs.rho_matrix_path,
+            inputs.tau_matrix_path,
         )
         check_matrices(vf_mtx, eps_mtx, rho_mtx, tau_mtx)
 
-        # Validate matrix size consistency
-        if vf_mtx.shape[0] != config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]:
+        num_total_surfaces = inputs.num_total_surfaces
+
+        if vf_mtx.shape[0] != num_total_surfaces:  # Validate matrix size consistency
             raise ValueError("The matrix dimensions must match the number of outdoor surfaces.")
 
-        sim_manager._num_outdoor_surfaces = config_dict[cls.CONFIG_NUM_OUTDOOR_SURFACES]
-        sim_manager._time_step = config_dict[cls.CONFIG_KEY_TIME_STEP]
-
-        # Compute resolution matrices
+        # 5. Solve the physics system (The heavy linear algebra computation)
         resolution_mtx, total_srd_vf_list = compute_resolution_matrices(
-            vf_mtx, eps_mtx, rho_mtx, tau_mtx
+            vf_matrix=vf_mtx,
+            eps_matrix=eps_mtx,
+            rho_matrix=rho_mtx,
+            tau_matrix=tau_mtx,
+            inversion_config=inputs.inversion_parameters,
         )
 
-        # Generate EpSimulationInstance for each building
-        min_surface_index = 0  # Tracks the portion of the shared temperature vector
+        # 6. Save the compiled resolution matrix directly into its long-term home
+        res_matrix_path = SimulationManifest.derive_resolution_matrix_path(working_dir)
+        if inputs.save_resolution_matrix:
+            save_npz(res_matrix_path, resolution_mtx)
 
-        for building_id in config_dict[cls.CONFIG_BUILDING_ID_LIST]:
-            # Create directory for the building's simulation data
-            path_sim_dir_building = os.path.join(sim_manager.path_output_dir, building_id)
-            create_dir(path_dir=path_sim_dir_building, overwrite=True)
+        # 7. Process buildings, slice the resolution matrix, and dump the individual worker pkls
 
-            # Define surface index range for this building
-            num_surfaces = config_dict[building_id][cls.CONFIG_NUM_OUTDOOR_SURFACES_PER_BUILDING]
+        compiled_buildings_list: list[CompiledBuildingState] = []
+        min_surface_index = 0
+
+        for i, b_input in enumerate(inputs.buildings):
+            # Create a dedicated subfolder for this building's simulation instance
+            building_output_dir = CompiledBuildingState.derive_output_dir(
+                runs_dir=runs_dir, building_index=i
+            )
+            building_output_dir.mkdir(exist_ok=False)
+
+            # Slice matrix segments for this building core
+            num_surfaces = len(b_input.outdoor_surface_names)
             max_surface_index = min_surface_index + num_surfaces - 1
 
-            # Initialize and serialize the EpSimulationInstance
-            path_pkl_file = EpSimulationInstance.init_and_preprocess_to_pkl(
-                identifier=building_id,
-                simulation_index=sim_manager.num_building,
-                path_output_dir=path_sim_dir_building,
-                path_idf=config_dict[building_id][cls.CONFIG_PATH_IDF],
-                outdoor_surface_id_list=config_dict[building_id][
-                    cls.CONFIG_LIST_KEY_OUTDOOR_SURFACE_ID
-                ],
+            building_matrix_slice = resolution_mtx[min_surface_index : max_surface_index + 1, :]
+            building_vf_srd_slice = total_srd_vf_list[min_surface_index : max_surface_index + 1]
+
+            # Initialize the building instance and dump it to disk in one atomic operation
+            EpSimulationBlueprint.init_and_preprocess_to_pkl(
+                building_input=b_input,
+                simulation_index=i,
                 min_surface_index=min_surface_index,
                 max_surface_index=max_surface_index,
-                resolution_mtx=resolution_mtx[min_surface_index : max_surface_index + 1, :],
-                srd_vf_list=total_srd_vf_list[min_surface_index : max_surface_index + 1],
+                resolution_mtx=building_matrix_slice,
+                srd_vf_list=building_vf_srd_slice,
+                runs_dir=runs_dir,
             )
 
-            # Register the building simulation instance in the manager
-            sim_manager._add_building_to_dict(building_id=building_id, path_to_pkl=path_pkl_file)
-
-            # Update min_surface_index for next building
+            compiled_buildings_list.append(
+                CompiledBuildingState(
+                    building_id=b_input.building_id,
+                    building_index=i,
+                    num_surfaces=num_surfaces,
+                )
+            )
             min_surface_index = max_surface_index + 1
 
-        # Save the simulation manager as a .pkl file if requested
-        if to_pkl:
-            sim_manager.to_pkl(path_folder=sim_manager.path_output_dir)
-
-        return sim_manager, sim_manager.to_pkl(
-            path_folder=sim_manager.path_output_dir, get_path_only=True
+        # 6. Build the lean runtime manifest.
+        manifest = SimulationManifest(
+            workspace_dir=working_dir,
+            energyplus_dir=inputs.energyplus_dir,
+            epw_file_name=epw_file_name,
+            num_ts_per_h=inputs.num_ts_per_h,
+            num_total_surfaces=num_total_surfaces,
+            save_resolution_matrix=inputs.save_resolution_matrix,  # Only care about the output matrix
+            compiled_buildings=compiled_buildings_list,
         )
+
+        # Write out the clean, unpolluted manifest to JSON
+        manifest.write_to_disk()
+
+        return cls(manifest)
+
+    @staticmethod
+    def _make_target_workspace_dir(target_workspace_dir: Path, overwrite: bool = False) -> None:
+        """Generate a clean, structurally sound workspace directory is ready for the simulation to run.
+
+        Args:
+            target_workspace_dir (Path): The absolute Path to the directory intended for the simulation workspace.
+            overwrite (bool, optional): If True, allows overwriting existing data, if the data is safe to overwrite.
+              Defaults to False.
+
+        Raises:
+            SecurityViolationError: If the target path threatens critical system or
+                user root boundaries (via assert_path_is_safe_for_purging).
+            WorkspaceConflictError: Blended exception cases:
+                - If the directory contains data and overwrite is False.
+                - If the folder is occupied but missing a valid 'simulation_manifest.json'.
+                - If unexpected foreign assets breach the exclusivity perimeter.
+                - If multiple climate profiles (.epw) are detected inside the root.
+        """
+        resolved_workspace = target_workspace_dir.resolve()
+        if resolved_workspace.exists() and any(resolved_workspace.iterdir()):
+            # Enforce system safety boundaries via our utility function
+            assert_path_is_safe_for_purging(resolved_workspace)
+            # Enforce data protection
+            if not overwrite:
+                raise WorkspaceConflictError(
+                    target_path=resolved_workspace,
+                    message=(
+                        f"Target workspace directory '{resolved_workspace}' already exists and contains data. "
+                        f"Set 'overwrite=True' to allow clearing this folder."
+                    ),
+                )
+
+            SimulationManifest.verify_workspace_exclusivity(resolved_workspace)
+
+            # =====================================================================
+            # ATOMIC PURGE OF SANCTIONED ENVIRONMENT
+            # =====================================================================
+            # The folder passed strict exclusivity matching, meaning every single file inside
+            # it is guaranteed to belong entirely to our simulation framework.
+            # We can safely delete the tree natively without risk of data corruption.
+            shutil.rmtree(resolved_workspace)
+
+        # Ensure a clean directory root exists to begin compiling
+        resolved_workspace.mkdir(parents=True, exist_ok=True)
 
     # -----------------------------------------------------#
     # -----------------  Run Simulation     ---------------#
     # -----------------------------------------------------#
 
-    @staticmethod
-    def run_lwr_simulation_in_subprocess_from_pkl(path_pkl_file: str):
+    @classmethod
+    def run_from_workspace_dir(cls, workspace_dir: Path) -> int:
+        """The clean pipeline entrypoint executing within the clean process boundary.
+
+        Args:
+            workspace_dir: Absolute path to the workspace directory containing the simulation manifest.
+        Returns:
+            The execution return code from the coupled simulation run.
         """
-        Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
-        The simulation is run in a subprocess to avoid duplicating the current process, which can be heavy for simulations at th eurban scale.
-        :param path_pkl_file: Path to the pickle file containing the EpLwrSimulationManager instance.
+        manifest_path = SimulationManifest.derive_json_path(workspace_dir)
+        adapted_manifest = SimulationManifest.load_and_adapt(manifest_path)
+        manager = cls(adapted_manifest)
+
+        # 1. Capture the 0 or 1 returned by the building simulation batch loop
+        result_code = manager.run_lwr_coupled_simulation()
+
+        # 2. If it's a 1 (failure), we explicitly tell the OS to exit with code 1
+        if result_code != 0:
+            logger.error("Simulation engine returned a non-zero status. Forcing exit.")
+            sys.exit(result_code)  # This directly sets process.exitcode in the parent!
+
+        return result_code
+
+    @classmethod
+    def run_in_new_process_from_workspace_dir(
+        cls, workspace_dir: Path, debug_mode: bool = False
+    ) -> int:
+        """Executes the coupled long-wave radiation simulation in an isolated process.
+
+        Spawns a clean, pristine Python runtime environment to execute the
+        urban-scale physics solvers. This pattern acts as a memory firewall,
+        preventing the parent process's geometric data footprint from duplicating
+        across parallel building workers.
+
+        Args:
+            workspace_dir: Absolute path to the workspace directory containing the simulation manifest.
+            debug_mode: If True, runs the simulation in the main process for debugging purposes.
+
+        Returns:
+            The execution return code from the isolated core engine process.
+
+        Raises:
+            FileNotFoundError: If the manifest JSON path does not exist on disk.
         """
-        if not os.path.isfile(path_pkl_file):
-            raise FileNotFoundError(f"File not found: {path_pkl_file}")
+        manifest_path = SimulationManifest.derive_json_path(workspace_dir)
 
-        result = subprocess.run(
-            [sys.executable, "-m", "lwrepcoupling.main_run_lwr_simulation", path_pkl_file],
-            text=True,
-        )
+        # Load data, automatically fixing any moved path references safely and ensure integrity
+        adapted_manifest = SimulationManifest.load_and_adapt(manifest_path)
 
-    def run_lwr_coupled_simulation_in_subprocess(self):
-        """
-        Runs the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
-        """
-        path_pkl_file = self.to_pkl(path_folder=self.path_output_dir)
+        if debug_mode:
+            print("Debug mode enabled: Running simulation in the main process.")
+            manager = cls(adapted_manifest)
+            exit_code = manager.run_lwr_coupled_simulation()
+        else:
+            ctx = get_context("spawn")
 
-        self.run_lwr_simulation_in_subprocess_from_pkl(path_pkl_file=path_pkl_file)
+            process = ctx.Process(target=cls.run_from_workspace_dir, args=(workspace_dir,))
 
-    # def run_lwr_coupled_simulation(self):
-    #     """
-    #     Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings in parallel and synchronously.
-    #     :return:
-    #     """
-    #
-    #     # To do: Make sure it's the proper size
-    #     shared_memory_array_size = self.num_outdoor_surfaces
-    #
-    #     # Run the simulation under a Manager context to share memory, locks, and barriers
-    #     with Manager() as manager:
-    #
-    #         # Initialize a lock to limit writing access to shared memory
-    #         shared_memory_lock = manager.Lock()  # Todo: Check if it's necessary as no overlapping writing is done
-    #         # Initialize a barrier to synchronize processes, when called with .wait() all processes will wait until all
-    #         # processes have reached the barrier
-    #         synch_point_barrier = manager.Barrier(self.num_building)
-    #         # Create shared memory for float64 data (enough for all processes' lists)
-    #         shm = shared_memory.SharedMemory(create=True,
-    #                                          size=shared_memory_array_size * np.float64().itemsize)
-    #
-    #         shm_timestep = shared_memory.SharedMemory(create=True,
-    #                                          size=self.num_building * np.float64().itemsize)
-    #
-    #         # Run the EnergyPlus simulations in parallel for all buildings, monitored by the EnergyPlus API
-    #         results_list = []
-    #         try:
-    #             num_workers = self.num_building  # One process per building, as they should all be run in parallel
-    #             # Start tasks
-    #             with ProcessPoolExecutor(max_workers=num_workers) as executor:
-    #                 futures = [
-    #                     executor.submit(
-    #                         EpSimulationInstance.run_coupled_simulation_from_ep_instance,
-    #                         path_ep_instance_pkl = self._building_id_to_path_pkl_dict[building_id],
-    #                         shared_memory_name=shm.name,
-    #                         shared_memory_timestep_name = shm_timestep.name,
-    #                         shared_memory_array_size=shared_memory_array_size,
-    #                         num_building = self.num_building,
-    #                         shared_memory_lock=shared_memory_lock,
-    #                         synch_point_barrier=synch_point_barrier,
-    #                         path_epw=self._path_epw,
-    #                         path_energyplus_dir=self._path_energyplus_dir,
-    #                         time_step=self._time_step
-    #                     )
-    #                     for building_id in self._building_id_list
-    #                 ]
-    #                 # Wait for all processes to complete
-    #                 for future in futures:
-    #                     try:
-    #                         results_list.append(future.result())
-    #                     except Exception as e:
-    #                         print(f"Task generated an exception: {e}")
-    #
-    #
-    #         finally:
-    #             # Cleanup
-    #             shm.close()
-    #             shm.unlink()
-    #
-    #     return results_list
+            process.start()
+            process.join()  # Wait for it to finish and free all memory cleanly
+            exit_code = process.exitcode
 
-    def run_lwr_coupled_simulation(self):
-        """
-        Run the coupled long-wave radiation (LWR) simulation with EnergyPlus for all buildings.
-        Bypasses Windows 61-handle limit by using manual Processes.
+        if exit_code is None:
+            raise SimulationCrashError(
+                "The simulation process vanished without returning an exit code."
+            )
+
+        if exit_code != 0:
+            if exit_code < 0:
+                signal_number = -exit_code
+                error_msg = (
+                    f"Simulation process killed by operating system signal: {signal_number}."
+                )
+                if signal_number == 9:
+                    error_msg += (
+                        " (Heuristic: This strongly indicates an Out-Of-Memory / OOM termination)."
+                    )
+
+                logger.critical(error_msg)
+                raise SimulationCrashError(error_msg)
+
+            error_msg = f"Simulation process encountered an unhandled exception and crashed with exit code: {exit_code}."
+            logger.error(error_msg)
+            raise SimulationCrashError(error_msg)
+
+        logger.info("Simulation process finished successfully with exit code: %d", exit_code)
+        return exit_code
+
+    def run_lwr_coupled_simulation(self) -> int:
+        """Runs the coupled long-wave radiation (LWR) simulation for all buildings.
+
+        Spawns and monitors individual building solver processes. Implements a
+        defensive polling execution loop to detect child process failures early,
+        aborting synchronization barriers to prevent permanent simulation deadlocks.
+
+        Raises:
+            BrokenBarrierError: If a child worker process crashes and forces
+                the synchronization grid to collapse.
+
+        Returns:
+            An integer status code: 0 for full success across all buildings,
+            1 if one or more building simulations encountered a runtime crash.
         """
 
-        # To do: Make sure it's the proper size
-        shared_memory_array_size = self.num_outdoor_surfaces
-
-        # Run the simulation under a Manager context to share memory, locks, and barriers
         with Manager() as manager:
-            # Initialize a lock (Optional: only needed if multiple buildings write to exact same index)
-            shared_memory_lock = manager.Lock()
+            # Initialize Barrier, one process per building
+            synch_point_barrier = manager.Barrier(self.num_buildings)
 
-            # Initialize Barrier
-            # Note: We use the manager's barrier to ensure it works across manual processes
-            synch_point_barrier = manager.Barrier(self.num_building)
-
-            # Create shared memory blocks
-            shm = shared_memory.SharedMemory(
-                create=True, size=shared_memory_array_size * np.float64().itemsize
+            # Shared memory vectors
+            shm_temperatures = shared_memory.SharedMemory(
+                create=True, size=self.num_total_surfaces * np.float64().itemsize
             )
-            shm_timestep = shared_memory.SharedMemory(
-                create=True, size=self.num_building * np.float64().itemsize
+            shm_timesteps = shared_memory.SharedMemory(
+                create=True, size=self.num_buildings * np.float64().itemsize
             )
 
-            processes = []
+            processes: list[WorkerTracker] = []
+            failed_processes: list[tuple[str, int, int]] = []
 
             try:
-                print(f"Launching {self.num_building} processes...")
+                # Note: Swapped to placeholder notation for logging best practices
+                logger.info("Launching %d processes...", self.num_buildings)
 
                 # --- 1. Create and Start Processes Manually ---
-                for building_id in self._building_id_list:
+                for building_index, building_state in enumerate(self.buildings):
                     p = Process(
                         target=EpSimulationInstance.run_coupled_simulation_from_ep_instance,
                         kwargs={
-                            "path_ep_instance_pkl": self._building_id_to_path_pkl_dict[building_id],
-                            "shared_memory_name": shm.name,
-                            "shared_memory_timestep_name": shm_timestep.name,
-                            "shared_memory_array_size": shared_memory_array_size,
-                            "num_building": self.num_building,
-                            "shared_memory_lock": shared_memory_lock,
+                            "ep_instance_pkl_path": self._manifest.get_building_instance_pkl_path(
+                                building_state
+                            ),
+                            "epw_path": self.epw_path,
+                            "energyplus_dir": self.energyplus_dir,
+                            "num_ts_per_h": self.num_ts_per_h,
+                            "output_dir": self._manifest.get_building_output_dir(building_state),
+                            "idf_path": self._manifest.get_building_idf_path(building_state),
+                            "num_buildings": self.num_buildings,
+                            "num_total_surfaces": self.num_total_surfaces,
+                            "shared_memory_temperatures_name": shm_temperatures.name,
+                            "shared_memory_timesteps_name": shm_timesteps.name,
                             "synch_point_barrier": synch_point_barrier,
-                            "path_epw": self._path_epw,
-                            "path_energyplus_dir": self._path_energyplus_dir,
-                            "time_step": self._time_step,
                         },
                     )
-                    processes.append(p)
+                    processes.append(WorkerTracker(building_state.building_id, building_index, p))
                     p.start()
 
-                # --- 2. Wait for completion (Bypasses Limit) ---
-                # Joining one by one avoids the WaitForMultipleObjects crash on Windows
-                for p in processes:
-                    p.join()
+                # --- 2. Active Polling Supervision Loop ---
+                logger.info("Entering active process supervision loop.")
+
+                # Keep looping as long as there are active background processes running
+                while any(worker.process.is_alive() for worker in processes):
+                    for worker in processes:
+                        # Check if a process has finished or died
+                        if not worker.process.is_alive():
+                            exit_code = worker.process.exitcode
+
+                            # If a process exited with a code other than 0, it crashed!
+                            if exit_code is not None and exit_code != 0:
+                                logger.error(
+                                    "CRITICAL: Building process [%d] with ID %s died with exit code %s!",
+                                    worker.building_index,
+                                    worker.building_id,
+                                    exit_code,
+                                )
+
+                                # Add to tracking
+                                if (
+                                    worker.building_id,
+                                    worker.building_index,
+                                    exit_code,
+                                ) not in failed_processes:
+                                    failed_processes.append(
+                                        (worker.building_id, worker.building_index, exit_code)
+                                    )
+
+                                # THE SELF-HEAL TRIGGER: Break the barrier immediately!
+                                # This raises a BrokenBarrierError inside all other 119 buildings,
+                                # causing them to stop waiting and gracefully terminate.
+                                logger.warning(
+                                    "Aborting synch_point_barrier to release surviving processes."
+                                )
+                                synch_point_barrier.abort()
+                                break  # Drop out of the inner loop to accelerate shutdown
+
+                    # Small sleep window prevents the main thread from maxing out a CPU core while polling
+                    time.sleep(0.5)
+
+                # --- 3. Final Orderly Cleanup Join ---
+                # Now that the loop finished (either naturally or via abort), clean up the handles.
+                # This is non-blocking now because they are all guaranteed to be dead or finishing.
+                for worker in processes:
+                    worker.process.join()
 
             finally:
-                # Cleanup Shared Memory
-                shm.close()
-                shm.unlink()
-                shm_timestep.close()
-                shm_timestep.unlink()
+                # Secure cleanup of shared memory resources to prevent OS memory leaks
+                shm_temperatures.close()
+                shm_temperatures.unlink()
+                shm_timesteps.close()
+                shm_timesteps.unlink()
+
+            # --- 4. Evaluate Aggregated Results ---
+            if failed_processes:
+                logger.critical(
+                    "Simulation batch failed. %d out of %d buildings encountered errors.",
+                    len(failed_processes),
+                    self.num_buildings,
+                )
+                return 1
+
+        logger.info("All %d building simulations completed successfully.", self.num_buildings)
+        return 0
