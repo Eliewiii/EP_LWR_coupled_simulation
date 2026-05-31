@@ -17,13 +17,16 @@ packages = ["src/lwrepcoupling"]
 [tool.pytest.ini_options]
 minversion = "7.0"
 pythonpath = "."
-testpaths = ["tests/unit"]
+testpaths = ["tests/unit","tests/integration"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 log_cli = true
 log_cli_level = "INFO"
 addopts = "-v --tb=short"
+markers = [
+    "integration: Marks tests as slow, multi-process integration or system-level suites."
+]
 
 [tool.ruff]
 line-length = 100

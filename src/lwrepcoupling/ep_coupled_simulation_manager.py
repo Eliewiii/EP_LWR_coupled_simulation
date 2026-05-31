@@ -432,7 +432,7 @@ class EpLwrSimulationManager:
         manager = cls(adapted_manifest)
 
         # 1. Capture the 0 or 1 returned by the building simulation batch loop
-        result_code = manager.run_lwr_coupled_simulation()
+        result_code = manager._run_lwr_coupled_simulation()
 
         # 2. If it's a 1 (failure), we explicitly tell the OS to exit with code 1
         if result_code != 0:
@@ -472,7 +472,7 @@ class EpLwrSimulationManager:
         if debug_mode:
             print("Debug mode enabled: Running simulation in the main process.")
             manager = cls(adapted_manifest)
-            exit_code = manager.run_lwr_coupled_simulation()
+            exit_code = manager._run_lwr_coupled_simulation()
         else:
             ctx = get_context("spawn")
 
@@ -509,7 +509,7 @@ class EpLwrSimulationManager:
         logger.info("Simulation process finished successfully with exit code: %d", exit_code)
         return exit_code
 
-    def run_lwr_coupled_simulation(self) -> int:
+    def _run_lwr_coupled_simulation(self) -> int:
         """Runs the coupled long-wave radiation (LWR) simulation for all buildings.
 
         Spawns and monitors individual building solver processes. Implements a

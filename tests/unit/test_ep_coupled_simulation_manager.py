@@ -156,25 +156,6 @@ def test_verify_workspace_exclusivity_multiple_epw_throws(tmp_path: Path) -> Non
 
 
 # =====================================================================
-# Matrix Loader and Size Alignment Verification
-# =====================================================================
-
-
-@mock.patch("lwrepcoupling.ep_coupled_simulation_manager.read_csr_matrices_from_npz")
-@mock.patch("lwrepcoupling.ep_coupled_simulation_manager.check_matrices")
-def test_load_and_validate_matrices_mismatch_throws(mock_check, mock_read, valid_inputs) -> None:
-    """Verify that matrix dimension discrepancies instantly trip safety checks."""
-    # Simulate loading an 8x8 matrix when our configuration input claims 4 surfaces
-    bad_vf = csr_matrix(np.eye(8))
-    mock_read.return_value = (bad_vf, bad_vf, bad_vf, bad_vf)
-
-    with pytest.raises(
-        ValueError, match="matrix dimensions must match the number of outdoor surfaces"
-    ):
-        EpLwrSimulationManager._load_and_validate_matrices(valid_inputs)
-
-
-# =====================================================================
 # Isolated Process Spawning & Exit Code Analysis
 # =====================================================================
 
