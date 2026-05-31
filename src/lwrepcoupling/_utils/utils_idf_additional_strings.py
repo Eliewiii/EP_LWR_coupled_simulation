@@ -16,41 +16,9 @@ It includes the following addons for each outdoor surface:
 - one actuator for the context surface temperature schedule (to be called each time step)
 """
 
-from typing import Annotated, Optional
+from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
-
-"""
-Tolerance for total view factor sum to account for floating-point precision issues
-The real tolerance is dependant on the precision of the input view factors, but 1e-7 should be good 
-for most cases, as view factors are usually given with 4 to 5 decimals.
-"""
-VF_TOLERANCE = 1e-7
-
-
-class SurfaceAddStringConfig(BaseModel):
-    surface_name: Annotated[str, Field(min_length=1)]
-    cumulated_ext_surf_view_factor: Annotated[float, Field(gt=0, le=1)]
-    sky_view_factor: Annotated[float | None, Field(ge=0, le=1)] = None
-    ground_view_factor: Annotated[float | None, Field(ge=0, le=1)] = None
-    ground_temperature_schedule: str = ""
-
-    @model_validator(mode="after")
-    def check_total_view_factor(self) -> "SurfaceAddStringConfig":
-        # Treat None as 0.0 for the summation logic
-        sky = self.sky_view_factor or 0.0
-        ground = self.ground_view_factor or 0.0
-        ext = self.cumulated_ext_surf_view_factor
-
-        total_vf = sky + ground + ext
-
-        if total_vf > 1.0 + VF_TOLERANCE:
-            raise ValueError(
-                f"Total view factor for {self.surface_name} exceeds 1.0: "
-                f"Sum is {total_vf:.4f} (Sky: {sky}, Ground: {ground}, Ext: {ext})"
-            )
-
-        return self
+from .._schemas import SurfaceAddStringConfig
 
 
 def generate_idfs_additional_strings(

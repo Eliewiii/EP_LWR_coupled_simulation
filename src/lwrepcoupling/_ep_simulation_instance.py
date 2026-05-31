@@ -9,42 +9,21 @@ from math import ceil, floor
 from multiprocessing import shared_memory
 from pathlib import Path
 from threading import BrokenBarrierError
-from typing import Any, List, Protocol
+from typing import Any, List
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict
 from pyenergyplus.api import EnergyPlusAPI
 
-from .schemas import CompiledBuildingState
-from .utils.utils_idf_additionnal_strings import (
+from ._schemas import (
+    CompiledBuildingState,
+    EpSimulationRuntimeConfig,
+    SynchronizerBarrier,
+)
+from ._utils.utils_idf_additional_strings import (
     name_surrounding_surface_temperature_schedule,
 )
 
 logger = logging.getLogger(__name__)
-
-
-class SynchronizerBarrier(Protocol):
-    """Structural type interface representing any process or thread barrier."""
-
-    def wait(self, timeout: float | None = None) -> int: ...
-    def abort(self) -> None: ...
-
-
-class EpSimulationRuntimeConfig(BaseModel):
-    """The strongly-typed configuration payload passed to spawned child processes."""
-
-    # Allow arbitrary types so the multiprocessing Barrier passes validation gates
-    model_config = ConfigDict(frozen=True)
-
-    building_state: CompiledBuildingState
-    epw_path: Path
-    num_ts_per_h: int
-    runs_dir: Path
-    num_buildings: int
-    num_total_surfaces: int
-    shared_memory_temperatures_name: str
-    shared_memory_timesteps_name: str
-    synch_point_barrier: SynchronizerBarrier
 
 
 class EpSimulationRuntimeWorker:

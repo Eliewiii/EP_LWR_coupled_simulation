@@ -6,6 +6,8 @@ import logging
 from concurrent.futures import ProcessPoolExecutor
 from typing import Annotated, Any
 
+from .._schemas.io_models import InversionConfig
+
 import numpy as np
 from pydantic import BaseModel, Field, field_validator
 from scipy.sparse import csr_matrix, diags
@@ -13,30 +15,6 @@ from scipy.sparse.linalg import gmres
 
 logger = logging.getLogger(__name__)
 
-
-class InversionConfig(BaseModel):
-    # Boundaries/Constraints
-    tol: Annotated[float, Field(ge=1e-8, le=1e-4)] = 1e-5
-    maxiter: Annotated[int, Field(ge=2, le=1000)] = 150
-    rtol: Annotated[float, Field(ge=1e-10, le=1e-5)] = 5e-7
-    precondition: bool = (
-        False  # Create preconditioner if needed (Jacobi Preconditioner: inverse of diagonal)
-    )
-    strict_tol: bool = False  # If True, will raise an error if the final error norm is above tol
-    num_workers: Annotated[int, Field(ge=0, le=60)] = (
-        1  # Parallel workers (0 means use all available CPUs)
-    )
-
-    # Custom validation
-    @field_validator("num_workers")
-    @classmethod
-    def check_workers(cls, v: int) -> int:
-        # Example: logic that Field can't do alone
-        if v == 0:
-            import os
-
-            return os.cpu_count() or 1
-        return v
 
 
 def compute_full_inverse_via_gmres_parallel(

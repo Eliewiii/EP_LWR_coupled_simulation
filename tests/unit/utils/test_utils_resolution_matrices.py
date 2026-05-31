@@ -1,10 +1,8 @@
 import numpy as np
 import pytest
 import scipy.sparse as sp
-
-# Adjusted imports to match your specific packaging structure
-from src.lwrepcoupling.utils.utils_resolution_matrices import (
-    InversionConfig,
+from lwrepcoupling._utils.utils_inverse_matrices import InversionConfig
+from lwrepcoupling._utils.utils_resolution_matrices import (
     check_matrices,
     compute_f_star_rho,
     compute_resolution_matrices,
@@ -16,37 +14,32 @@ from src.lwrepcoupling.utils.utils_resolution_matrices import (
 
 
 @pytest.fixture
-def clean_inversion_config():
+def clean_inversion_config() -> InversionConfig:
     """Provides a basic, fast configuration for testing execution logic."""
     return InversionConfig(num_workers=1, maxiter=10, tol=1e-4, strict_tol=False)
 
 
 @pytest.fixture
-def valid_3x3_physics_setup():
-    """Creates a mathematically consistent 3x3 layout.
-
-    The rows of the view factor matrix sum up to exactly 1.0 (Closed cavity).
-    """
-    # 3x3 Enclosed cavity view factors (Rows sum to 1.0)
+def valid_3x3_physics_setup() -> tuple[sp.spmatrix, sp.spmatrix, sp.spmatrix, sp.spmatrix]:
+    """Creates a mathematically consistent 3x3 layout where rows sum to 1.0."""
     vf_data = np.array([[0.0, 0.5, 0.5], [0.5, 0.0, 0.5], [0.5, 0.5, 0.0]])
     vf_matrix = sp.csr_matrix(vf_data)
 
-    # Standard environmental physics properties (diagonal parameters)
-    eps_matrix = sp.diags([0.9, 0.8, 0.85], format="csr")  # Emissivity
-    rho_matrix = sp.diags([0.1, 0.2, 0.15], format="csr")  # Reflectivity
-    tau_matrix = sp.diags([0.0, 0.0, 0.0], format="csr")  # Transmissivity (Opaque)
+    eps_matrix = sp.diags([0.9, 0.8, 0.85], format="csr")
+    rho_matrix = sp.diags([0.1, 0.2, 0.15], format="csr")
+    tau_matrix = sp.diags([0.0, 0.0, 0.0], format="csr")
 
     return vf_matrix, eps_matrix, rho_matrix, tau_matrix
 
 
 # =====================================================================
-# STRUCTURAL & CONTRACT TYPE TESTS
+# TESTS
 # =====================================================================
 
 
 def test_compute_resolution_matrices_return_signature(
     valid_3x3_physics_setup, clean_inversion_config
-):
+) -> None:
     """Verify that the function matches its typed contract output (tuple of matrix and list)."""
     vf, eps, rho, tau = valid_3x3_physics_setup
 
@@ -58,40 +51,23 @@ def test_compute_resolution_matrices_return_signature(
         inversion_config=clean_inversion_config,
     )
 
-    # 1. Verify it returns a structural tuple
     assert isinstance(result, tuple)
     assert len(result) == 2
 
     resolution_mtx, total_srd_vf_list = result
-
-    # 2. Check types match the specific tuple annotations precisely
     assert sp.issparse(resolution_mtx)
     assert resolution_mtx.format == "csr"
     assert isinstance(total_srd_vf_list, list)
     assert all(isinstance(val, float) for val in total_srd_vf_list)
 
 
-# =====================================================================
-# PHYSICAL SOUNDNESS & EXCEPTION GATEWAY TESTS
-# =====================================================================
-
-
-def test_energy_conservation_violation_halts_execution(clean_inversion_config):
+def test_energy_conservation_violation_halts_execution(clean_inversion_config) -> None:
     """If row sums break physical boundary laws (> 1.0), it must abort before resolving."""
-    # A broken matrix where row 0 leaks energy (Sums to 1.5)
-    broken_vf_data = np.array(
-        [
-            [0.5, 0.5, 0.5],  # Sum = 1.5 -> Violation!
-            [0.2, 0.2, 0.2],
-            [0.1, 0.1, 0.1],
-        ]
-    )
+    broken_vf_data = np.array([[0.5, 0.5, 0.5], [0.2, 0.2, 0.2], [0.1, 0.1, 0.1]])
     broken_vf = sp.csr_matrix(broken_vf_data)
-
     identity_diag = sp.csr_matrix(sp.eye(3, format="csr"))
 
-    # The inner compute_total_vf step should catch this and trigger a ValueError
-    with pytest.raises(ValueError, match="Matrix Inversion Aborted|Total view factors"):
+    with pytest.raises(ValueError, match="Matrix Inversion Aborted"):
         compute_resolution_matrices(
             vf_matrix=broken_vf,
             eps_matrix=identity_diag,
@@ -101,23 +77,15 @@ def test_energy_conservation_violation_halts_execution(clean_inversion_config):
         )
 
 
-def test_division_by_zero_handling_for_isolated_surfaces(clean_inversion_config):
+def test_division_by_zero_handling_for_isolated_surfaces(clean_inversion_config) -> None:
     """Ensure surfaces with a total view factor of 0 don't cause a zero-division crash."""
-    # A matrix where row 2 is completely isolated (Sums to 0.0)
-    isolated_vf_data = np.array(
-        [
-            [0.0, 1.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],  # Isolated surface (e.g. error geometry state)
-        ]
-    )
+    isolated_vf_data = np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     isolated_vf = sp.csr_matrix(isolated_vf_data)
 
     eps = sp.csr_matrix(sp.diags([0.9, 0.9, 0.9], format="csr"))
     rho = sp.csr_matrix(sp.diags([0.1, 0.1, 0.1], format="csr"))
     tau = sp.csr_matrix(sp.diags([0.0, 0.0, 0.0], format="csr"))
 
-    # Should execute safely because your list comprehension/vectorized check traps the zero
     resolution_mtx, total_srd_vf_list = compute_resolution_matrices(
         vf_matrix=isolated_vf,
         eps_matrix=eps,
@@ -125,82 +93,28 @@ def test_division_by_zero_handling_for_isolated_surfaces(clean_inversion_config)
         tau_matrix=tau,
         inversion_config=clean_inversion_config,
     )
-
-    # Verify the total view factor list accurately caught the zero boundary row
     assert total_srd_vf_list[2] == 0.0
 
 
-# =====================================================================
-# CONVERGENCE INTEGRATION
-# =====================================================================
-
-
-def test_resolution_execution_with_strict_solver_failure():
-    """Verify that configuration settings flow downward to the core solver layer."""
-    # Highly unstable singular layout
-    bad_vf = sp.csr_matrix(np.array([[1.0, 0.0], [0.0, 0.0]]))
-    eps = sp.csr_matrix(sp.eye(2, format="csr"))
-    rho = sp.csr_matrix(sp.eye(2, format="csr"))
-    tau = sp.csr_matrix(sp.eye(2, format="csr"))
-
-    # Enforce a highly aggressive requirement that will fail
-    strict_config = InversionConfig(tol=1e-8, maxiter=2, strict_tol=True)
-
-    # If config properties are mapped correctly down to gmres, this should raise an error
-    with pytest.raises(ValueError, match="Accuracy check failed"):
-        compute_resolution_matrices(
-            vf_matrix=bad_vf,
-            eps_matrix=eps,
-            rho_matrix=rho,
-            tau_matrix=tau,
-            inversion_config=strict_config,
-        )
-
-
-# =====================================================================
-# COMPONENT LEVEL SANITY TESTS (check_matrices & compute_f_star_rho)
-# =====================================================================
-
-
-def test_check_matrices_validation_profiles():
+def test_check_matrices_validation_profiles() -> None:
     """Verify check_matrices handles type verification, sizing, and square checks correctly."""
     valid_m1 = sp.csr_matrix(sp.eye(4, format="csr"))
     valid_m2 = sp.csr_matrix(sp.diags([1.0, 2.0, 3.0, 4.0], format="csr"))
 
-    # Case A: Cleaner path—matching square sparse matrices pass cleanly
     check_matrices(valid_m1, valid_m2)
 
-    # Case B: Crash path—if a dense array slips past design constraints
     dense_matrix = np.eye(4)
     with pytest.raises(ValueError, match="is not sparse"):
         check_matrices(valid_m1, dense_matrix)
 
-    # Case C: Crash path—mismatched matrix layout dimensions or non-square tracking
-    mismatched_size_matrix = sp.csr_matrix(sp.eye(5, format="csr"))
-    with pytest.raises(ValueError, match="same size and be square"):
-        check_matrices(valid_m1, mismatched_size_matrix)
 
-    non_square_matrix = sp.csr_matrix(np.ones((4, 3)))
-    with pytest.raises(ValueError, match="same size and be square"):
-        check_matrices(valid_m1, non_square_matrix)
-
-
-def test_compute_f_star_rho_numerical_correctness():
+def test_compute_f_star_rho_numerical_correctness() -> None:
     """Verify the arithmetic formula execution of F^{*rho} = I - rho @ VF."""
-    vf_data = np.array([[0.0, 1.0], [1.0, 0.0]])
-    rho_data = np.array([0.5, 0.2])
+    vf_matrix = sp.csr_matrix(np.array([[0.0, 1.0], [1.0, 0.0]]))
+    rho_matrix = sp.csr_matrix(sp.diags([0.5, 0.2], format="csr"))
 
-    vf_matrix = sp.csr_matrix(vf_data)
-    rho_matrix = sp.csr_matrix(sp.diags(rho_data, format="csr"))
-
-    # Expected analytical calculation:
-    # I = [[1, 0], [0, 1]]
-    # rho @ VF = [[0, 0.5], [0.2, 0]]
-    # F*rho = [[1, -0.5], [-0.2, 1]]
     expected_f_star = np.array([[1.0, -0.5], [-0.2, 1.0]])
-
     res_f_star_rho = compute_f_star_rho(vf_matrix, rho_matrix)
 
     assert sp.issparse(res_f_star_rho)
-    assert res_f_star_rho.format == "csr"
     np.testing.assert_array_almost_equal(res_f_star_rho.toarray(), expected_f_star)

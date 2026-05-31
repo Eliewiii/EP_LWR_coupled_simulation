@@ -1,5 +1,19 @@
-from .ep_coupled_simulation_manager import EpLwrSimulationManager
-from .ep_simulation_instance_with_shared_memory import EpSimulationInstance
+from lwrepcoupling._schemas import BuildingInput, InversionConfig, SimulationInputs
+from lwrepcoupling.exceptions import (
+    SecurityViolationError,
+    SimulationCrashError,
+    WorkspaceConflictError,
+)
 
-__all__ = ["EpLwrSimulationManager", "EpSimulationInstance"]
+from .ep_coupled_simulation_manager import EpLwrSimulationManager
+
+__all__ = [
+    "EpLwrSimulationManager",
+    "SimulationInputs",
+    "BuildingInput",
+    "InversionConfig",
+    "SecurityViolationError",
+    "SimulationCrashError",
+    "WorkspaceConflictError",
+]
 __version__ = "0.1.0"

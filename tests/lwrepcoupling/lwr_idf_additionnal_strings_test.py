@@ -1,6 +1,6 @@
 """ """
 
-from src.lwrepcoupling.utils.utils_idf_additionnal_strings import (
+from src.lwrepcoupling._utils.utils_idf_additional_strings import (
     _write_surface_property_local_environment,
     _write_surface_property_surrounding_surfaces,
     _write_surface_temperature_schedule,

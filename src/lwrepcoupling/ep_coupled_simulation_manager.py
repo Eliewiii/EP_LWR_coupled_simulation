@@ -9,20 +9,27 @@ import time
 from multiprocessing import Manager, get_context, shared_memory
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 import numpy as np
 from scipy.sparse import csr_matrix, save_npz
 
-from .ep_simulation_instance import EpSimulationRuntimeConfig, EpSimulationRuntimeWorker
-from .schemas import BuildingInput, CompiledBuildingState, SimulationInputs, SimulationManifest
-from .utils import (
+from ._ep_simulation_instance import EpSimulationRuntimeWorker
+from ._schemas import (
+    BuildingInput,
+    CompiledBuildingState,
+    EpSimulationRuntimeConfig,
+    SimulationInputs,
+    SimulationManifest,
+)
+from ._utils import (
     check_matrices,
     compute_resolution_matrices,
     generate_idfs_additional_strings,
     read_csr_matrices_from_npz,
 )
-from .utils.utils_io import WorkspaceConflictError, assert_path_is_safe_for_purging
+from ._utils.utils_io import assert_path_is_safe_for_purging
+from .exceptions import SimulationCrashError, WorkspaceConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +40,6 @@ class WorkerTracker(NamedTuple):
     building_id: str
     building_index: int
     process: BaseProcess
-
-
-class SimulationCrashError(RuntimeError):
-    """Raised when the isolated long-wave radiation simulation crashes."""
 
 
 class EpLwrSimulationManager:
@@ -59,11 +62,6 @@ class EpLwrSimulationManager:
     def workspace_dir(self) -> Path:
         """The absolute path to the active simulation environment."""
         return self._manifest.workspace_dir
-
-    @property
-    def energyplus_dir(self) -> Path:
-        """The absolute path to the EnergyPlus installation directory."""
-        return self._manifest.energyplus_dir
 
     @property
     def epw_path(self) -> Path:
@@ -93,7 +91,7 @@ class EpLwrSimulationManager:
     @classmethod
     def compile_and_initialize_workspace(
         cls, inputs: SimulationInputs, overwrite: bool = False
-    ) -> "EpLwrSimulationManager":
+    ) -> Self:
         """Consumes raw simulation inputs and structurally generates the disk workspace.
 
         Acts as the central orchestration workflow, validating environment safety,
@@ -157,7 +155,6 @@ class EpLwrSimulationManager:
         # 5. Lock and Commit the Manifest Data Contract
         manifest = SimulationManifest(
             workspace_dir=working_dir,
-            energyplus_dir=inputs.energyplus_dir,
             epw_file_name=inputs.epw_path.name,
             num_ts_per_h=inputs.num_ts_per_h,
             num_total_surfaces=inputs.num_total_surfaces,
@@ -329,12 +326,6 @@ class EpLwrSimulationManager:
         Raises:
             FileNotFoundError: If any critical compilation dependency is missing.
         """
-        # Delegating cleanly to self (the manager encapsulates the manifest properties)
-        if not manifest.energyplus_dir.is_dir():
-            raise FileNotFoundError(
-                f"Missing core EnergyPlus engine directory at: {manifest.energyplus_dir}"
-            )
-
         if not manifest.epw_path.is_file():
             raise FileNotFoundError(
                 f"Missing simulation weather file (EPW) at: {manifest.epw_path}"

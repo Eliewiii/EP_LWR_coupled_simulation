@@ -8,6 +8,7 @@ from pydantic import (
     field_validator,
 )
 
+
 class InversionConfig(BaseModel):
     # Boundaries/Constraints
     tol: Annotated[float, Field(ge=1e-8, le=1e-4)] = 1e-5
@@ -64,7 +65,6 @@ class SimulationInputs(BaseModel):
 
     Attributes:
         workspace_dir: Target root directory path for the simulation workspace.
-        energyplus_dir: Path to the local EnergyPlus installation directory.
         epw_path: Path to the raw source weather (EPW) file.
         num_ts_per_h: Number of simulation time steps per hour, as defined in the EnergyPlus IDF.
         vf_matrix_path: Path to the computed View Factor sparse matrix file.
@@ -76,7 +76,6 @@ class SimulationInputs(BaseModel):
     """
 
     workspace_dir: DirectoryPath
-    energyplus_dir: DirectoryPath
     epw_path: FilePath
     num_ts_per_h: int
 
@@ -123,6 +122,3 @@ class SimulationInputs(BaseModel):
     def num_total_surfaces(self) -> int:
         """Calculates the aggregate outdoor surface count across all inputs."""
         return sum(len(b.outdoor_surface_names) for b in self.buildings)
-    
-
-

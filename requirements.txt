@@ -2,6 +2,7 @@
 numpy ~=  2.4.0
 scipy ~= 1.15.0 
 pydantic ~= 2.6.0
+pyenergyplus-lbnl ~= 26.1.0
 
 # Testing & Linting (Development)
 pytest ~= 8.1.0

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Protocol, Self, runtime_checkable
+from typing import ClassVar, Protocol, Self, runtime_checkable
 
 from pydantic import (
     BaseModel,
@@ -91,12 +91,11 @@ class SimulationManifest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    RUNS_DIR_NAME: str = "runs"
-    MANIFEST_FILE_NAME: str = "simulation_manifest.json"
-    RESOLUTION_MTX_FILE_NAME: str = "resolution_matrix.npz"
+    RUNS_DIR_NAME: ClassVar[str] = "runs"
+    MANIFEST_FILE_NAME: ClassVar[str] = "simulation_manifest.json"
+    RESOLUTION_MTX_FILE_NAME: ClassVar[str] = "resolution_matrix.npz"
 
     workspace_dir: Path
-    energyplus_dir: Path
     epw_file_name: str
     num_ts_per_h: int
     num_total_surfaces: int
@@ -253,7 +252,7 @@ class EpSimulationRuntimeConfig(BaseModel):
     """The strongly-typed configuration payload passed to spawned child processes."""
 
     # Allow arbitrary types so the multiprocessing Barrier passes validation gates
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     building_state: CompiledBuildingState
     epw_path: Path
