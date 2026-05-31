@@ -36,5 +36,5 @@ jobs:
         with:
           version: true
       # Test Runner (Pytest)
-      # - name: Run Tests (Pytest)
-      #   run: pytest
+      - name: Run Tests (Pytest)
+        run: pytest
