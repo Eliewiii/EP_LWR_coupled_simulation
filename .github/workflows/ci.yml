@@ -31,10 +31,13 @@ jobs:
       - name: Run Linter (Ruff)
         run: ruff check .
       # Type Checker
-      - name: Run Pyright Static Type Analyzer
+      - name: Run Pyright
         uses: jakebailey/pyright-action@v2
         with:
-          version: true
+          annotate: all
+          warnings: false
+          lib: false
+          no-comments: false
       # Test Runner (Pytest)
       - name: Run Tests (Pytest)
         run: pytest
