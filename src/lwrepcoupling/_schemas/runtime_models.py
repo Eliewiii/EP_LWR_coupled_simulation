@@ -193,7 +193,8 @@ class SimulationManifest(BaseModel):
 
     @model_validator(mode="after")
     def verify_num_total_surfaces(self) -> Self:
-        """Guarantees that the total number of outdoor surfaces tracked across all buildings perfectly
+        """Guarantees that the total number of outdoor surfaces tracked across all buildings
+        perfectly
         matches the manifest declaration, to avoid conflicts between the resolution matrix size and
         the actual surface count.
         Raises:

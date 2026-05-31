@@ -122,7 +122,8 @@ def compute_resolution_matrices(
     f_srd_star = sp.diags([1.0 - vf_srd for vf_srd in total_srd_vf_list], offsets=0, format="csr")
 
     # Final resolution matrix
-    # resolution_mtx = (  # Note: the original formula included a tau_matrix @ vf_matrix term, but it is not present in the final implementation.
+    # resolution_mtx = (  # Note: the original formula included a tau_matrix @ vf_matrix term,
+    # but it is not present in the final implementation.
     #     inv_f_srd_epsilon
     #     @ ((id_mtx - vf_matrix + tau_matrix @ vf_matrix) @ inv_f_star_rho - f_srd_star)
     #     @ eps_matrix

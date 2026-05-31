@@ -4,7 +4,6 @@ from pathlib import Path
 from ..exceptions import SecurityViolationError
 
 
-
 def assert_path_is_safe_for_purging(target_path: Path) -> None:
     """Validates that a directory path is safe to clear without risking system stability.
 
@@ -50,5 +49,6 @@ def assert_path_is_safe_for_purging(target_path: Path) -> None:
     if len(resolved_path.parts) < 3:
         raise SecurityViolationError(
             target_path=resolved_path,
-            violation_reason=f"Path is too close to the file system root (directory depth: {len(resolved_path.parts)})",
+            violation_reason=f"Path is too close to the file system root "
+            f"(directory depth: {len(resolved_path.parts)})",
         )

@@ -1,7 +1,6 @@
 from typing import Annotated
 
-from pydantic import BaseModel, Field, model_validator, field_validator
-
+from pydantic import BaseModel, Field, model_validator
 
 
 class SurfaceAddStringConfig(BaseModel):
@@ -27,4 +26,3 @@ class SurfaceAddStringConfig(BaseModel):
             )
 
         return self
-    

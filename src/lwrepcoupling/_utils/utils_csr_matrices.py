@@ -12,7 +12,7 @@ def read_csr_matrices_from_npz(*path_csr_matrix_npz_files: Path) -> list[Any]:
     """Load multiple sparse matrices from a single .npz file.
 
     Args:
-            path_csr_matrix_npz_files (str): Path to the csr matrix file.
+        path_csr_matrix_npz_files: Path to the csr matrix file.
 
     Raises:
         FileNotFoundError: If the file does not exist.

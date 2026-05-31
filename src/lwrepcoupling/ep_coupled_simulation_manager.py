@@ -1,5 +1,6 @@
 """
-Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus among multiple buildings.
+Class to manage the couped long-wave radiation (LWR) simulation with EnergyPlus among
+multiple buildings.
 """
 
 import logging
@@ -180,7 +181,8 @@ class EpLwrSimulationManager:
         Returns:
             A tuple containing:
                 - resolution_mtx (np.ndarray): The fully solved dense system resolution matrix.
-                - total_srd_vf_list (list[float]): Vector of calculated view factors for surrounding surfaces.
+                - total_srd_vf_list (list[float]): Vector of calculated total surrounding surfaces
+                    view factors.
 
         Raises:
             ValueError: If the shapes of the read sparse matrix inputs do not perfectly match
@@ -222,11 +224,15 @@ class EpLwrSimulationManager:
 
         Args:
             building_index: Zero-based sequence positioning tracker for the targeted building.
-            building_input: Raw incoming layout data contract containing surface collections and source paths.
+            building_input: Raw incoming layout data contract containing surface collections
+                and source paths.
             runs_dir: Path to the active workspace subfolder hosting all execution directories.
-            min_surface_index: Offset marker defining where this building's surfaces start in the global array.
-            resolution_mtx: The fully solved dense system matrix representing all combined buildings.
-            total_srd_vf_list: Global array containing computed surrounding view factors for all surfaces.
+            min_surface_index: Offset marker defining where this building's surfaces start in
+                the global array.
+            resolution_mtx: The fully solved dense system matrix representing all combined
+                buildings.
+            total_srd_vf_list: Global array containing computed surrounding view factors for
+                all surfaces.
 
         Returns:
             CompiledBuildingState: A validated Pydantic runtime data asset tracking the newly
@@ -276,11 +282,14 @@ class EpLwrSimulationManager:
     def _make_target_workspace_dir(
         cls, target_workspace_dir: Path, overwrite: bool = False
     ) -> None:
-        """Generate a clean, structurally sound workspace directory is ready for the simulation to run.
+        """
+        Generate a clean, structurally sound workspace directory is ready for the simulation to run.
 
         Args:
-            target_workspace_dir (Path): The absolute Path to the directory intended for the simulation workspace.
-            overwrite (bool, optional): If True, allows overwriting existing data, if the data is safe to overwrite.
+            target_workspace_dir (Path): The absolute Path to the directory intended for
+                the simulation workspace.
+            overwrite (bool, optional): If True, allows overwriting existing data, if the data is
+                safe to overwrite.
               Defaults to False.
 
         Raises:
@@ -301,7 +310,8 @@ class EpLwrSimulationManager:
                 raise WorkspaceConflictError(
                     target_path=resolved_workspace,
                     message=(
-                        f"Target workspace directory '{resolved_workspace}' already exists and contains data. "
+                        f"Target workspace directory '{resolved_workspace}' already exists and "
+                        f"contains data."
                         f"Set 'overwrite=True' to allow clearing this folder."
                     ),
                 )
@@ -387,8 +397,10 @@ class EpLwrSimulationManager:
                 raise WorkspaceConflictError(
                     target_path=resolved_workspace,
                     message=(
-                        f"Security Block: Multiple climate profiles discovered inside '{resolved_workspace.name}'. "
-                        f"Workspace must contain at most one weather data file to guarantee deterministic execution."
+                        f"Security Block: Multiple climate profiles discovered inside "
+                        f"'{resolved_workspace.name}'. "
+                        f"Workspace must contain at most one weather data file to guarantee "
+                        f"deterministic execution."
                     ),
                 )
 
@@ -396,7 +408,8 @@ class EpLwrSimulationManager:
                 target_path=resolved_workspace,
                 message=(
                     f"Security Block: Workspace exclusivity breach! Found unexpected foreign asset "
-                    f"'{resolved_item.name}' inside the workspace perimeter. Operations blocked to preserve data."
+                    f"'{resolved_item.name}' inside the workspace perimeter. Operations blocked to "
+                    f"preserve data."
                 ),
             )
 
@@ -409,7 +422,8 @@ class EpLwrSimulationManager:
         """The clean pipeline entrypoint executing within the clean process boundary.
 
         Args:
-            workspace_dir: Absolute path to the workspace directory containing the simulation manifest.
+            workspace_dir: Absolute path to the workspace directory containing the
+                simulation manifest.
         Returns:
             The execution return code from the coupled simulation run.
         """
@@ -439,7 +453,8 @@ class EpLwrSimulationManager:
         across parallel building workers.
 
         Args:
-            workspace_dir: Absolute path to the workspace directory containing the simulation manifest.
+            workspace_dir: Absolute path to the workspace directory containing
+                the simulation manifest.
             debug_mode: If True, runs the simulation in the main process for debugging purposes.
 
         Returns:
@@ -486,7 +501,8 @@ class EpLwrSimulationManager:
                 logger.critical(error_msg)
                 raise SimulationCrashError(error_msg)
 
-            error_msg = f"Simulation process encountered an unhandled exception and crashed with exit code: {exit_code}."
+            error_msg = "Simulation process encountered an unhandled exception and crashed with "
+            f"exit code: {exit_code}."
             logger.error(error_msg)
             raise SimulationCrashError(error_msg)
 
@@ -509,7 +525,7 @@ class EpLwrSimulationManager:
             1 if one or more building simulations encountered a runtime crash.
         """
         # Using an explicit 'spawn' context here instead of the default Linux 'fork'
-        # to prevent deadlocks when duplicating the underlying native pyenergyplus C++ runtime bindings.
+        # to prevent deadlocks when duplicating the underlying  pyenergyplus C++ runtime bindings.
         ctx = get_context("spawn")
 
         with Manager() as manager:
@@ -564,7 +580,8 @@ class EpLwrSimulationManager:
                             # If a process exited with a code other than 0, it crashed!
                             if exit_code is not None and exit_code != 0:
                                 logger.error(
-                                    "CRITICAL: Building process [%d] with ID %s died with exit code %s!",
+                                    "CRITICAL: Building process [%d] with ID %s died with"
+                                    "exit code %s!",
                                     worker.building_index,
                                     worker.building_id,
                                     exit_code,
@@ -589,7 +606,6 @@ class EpLwrSimulationManager:
                                 synch_point_barrier.abort()
                                 break  # Drop out of the inner loop to accelerate shutdown
 
-                    # Small sleep window prevents the main thread from maxing out a CPU core while polling
                     time.sleep(0.01)
 
                 # --- 3. Final Orderly Cleanup Join ---

@@ -162,7 +162,6 @@ def test_runtime_config_arbitrary_types_allowed(tmp_path: Path) -> None:
     )
     mock_barrier = MockMultiprocessingBarrier()
 
-    # This will raise a ValidationError if configuration parameters fail to process arbitrary structures
     config = EpSimulationRuntimeConfig(
         building_state=b_state,
         epw_path=tmp_path / "climate.epw",

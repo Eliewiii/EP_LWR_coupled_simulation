@@ -2,17 +2,20 @@
 Functions to add strings to the IDF file for LWR coupling.
 It includes the following addons for each outdoor surface:
 - one SurfaceProperty:LocalEnvironment
-- one SurfaceProperty:SurroundingSurfaces (associated to the SurfaceProperty:LocalEnvironment) that contains:
+- one SurfaceProperty:SurroundingSurfaces (associated to the SurfaceProperty:LocalEnvironment)
+  that contains:
     - an identifier
     - the name of the surface
     - a sky view factor
     - a sky temperature schedule (left empty, EP will compute it well on its own)
-    - a ground view factor (if one surface only, if more detailed us the dedicated SurfaceProperty:GroundSurfaces)
-    - a ground temperature schedule (left empty, EP will compute it well on its own, but can be used to force a temperature)
-    - the "combined" one conetxt surface name
+    - a ground view factor (if one surface only, if more detailed use the dedicated
+        SurfaceProperty:GroundSurfaces)
+    - a ground temperature schedule (left empty, EP will compute it well on its own, but can be used
+        to force a temperature)
+    - the "combined" one context surface name
     - the cumulated view factor to the context surface
     - the temperature schedule of the context surface
-- one temperature schedule for the conetxt surface (to be updated at each time step)
+- one temperature schedule for the context surface (to be updated at each time step)
 - one actuator for the context surface temperature schedule (to be called each time step)
 """
 
@@ -27,11 +30,26 @@ def generate_idfs_additional_strings(
     sky_vf_list: Optional[list[float]] = None,
     ground_vf_list: Optional[list[float]] = None,
 ) -> str:
-    """
-    Generate the additional strings to add to the IDF file for the LWR coupling.
-    Consist of the generation of a SurfaceProperty:LocalEnvironment and a SurfaceProperty:SurroundingSurfaces for each
-    outdoor surface, with temperature schedule for the surrounding surfaces to be actuated to account for the LWR.
-    :return:
+    """Generate the additional strings to add to the IDF file for the LWR coupling.
+    Consist of the generation of a SurfaceProperty:LocalEnvironment and a
+    SurfaceProperty:SurroundingSurfaces for each outdoor surface, with temperature schedule for the
+    surrounding surfaces to be actuated to account for the LWR.
+
+    Args:
+        outdoor_surface_names (list[str]): list of names of the outdoor surfaces of the building
+        srd_vf_list (list[float]): list of the total surrounding view factors for each
+            outdoor surface
+        sky_vf_list (Optional[list[float]], optional): list of the sky view factors
+            for each outdoor surface. Default to None
+        ground_vf_list (Optional[list[float]], optional): list of the ground view factors
+            for each outdoor surface. Defaults to None.
+
+    Returns:
+        str: Additional string to add to the idf
+
+    Raises:
+        ValueError : if there are inconsistency in the sum of VF on surfaces
+
     """
     additional_strings = ""
     for i, surface_name in enumerate(outdoor_surface_names):
@@ -49,7 +67,9 @@ def generate_idfs_additional_strings(
 def _generate_surface_lwr_idf_additional_string(add_string_config: SurfaceAddStringConfig) -> str:
     """
     Generate the additional IDF string for a given surface based on the provided configuration.
-    :param add_string_config: Configuration object containing all necessary parameters for string generation.
+    Args:
+        add_string_config: Configuration object containing all necessary parameters for string
+        generation.
     :return: A formatted string to be appended to the IDF file for LWR coupling
     """
     surface_name = add_string_config.surface_name
@@ -134,7 +154,8 @@ def _write_surface_property_surrounding_surfaces(
         f"  {ground_temperature_schedule}, !- Ground Temperature Schedule Name\n"
         f"  {context_surface_name}, !- Surrounding Surface 1 Name\n"
         f"  {cumulated_view_factor}, !- Surrounding Surface 1 View Factor\n"
-        f"  {context_surface_temperature_schedule}; !- Surrounding Surface 1 Temperature Schedule Name\n"
+        f"  {context_surface_temperature_schedule}; !- Surrounding Surface 1 Temperature "
+        f"Schedule Name\n"
     )
 
     return surface_property_str

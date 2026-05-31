@@ -45,10 +45,10 @@ def test_inversion_config_out_of_bounds_throws() -> None:
 
 def test_identity_matrix_inversion() -> None:
     """Inverting an identity matrix should yield an identical identity matrix."""
-    I = csr_matrix(np.eye(3))
+    id_mtx = csr_matrix(np.eye(3))
     config = InversionConfig(num_workers=1, tol=1e-5)
 
-    inv_approx, error_norm = compute_full_inverse_via_gmres_parallel(I, config)
+    inv_approx, error_norm = compute_full_inverse_via_gmres_parallel(id_mtx, config)
 
     assert error_norm < config.tol
     np.testing.assert_array_almost_equal(inv_approx.toarray(), np.eye(3))

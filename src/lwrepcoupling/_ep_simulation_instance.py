@@ -1,7 +1,4 @@
-"""
-Class to represent an instance of a simulation of the EP model, generating the idf additional strings,
-managing the handlers etc.
-"""
+""" """
 
 import logging
 import sys
@@ -179,7 +176,7 @@ class EpSimulationRuntimeWorker:
     ) -> int:
         """Hooks up closures and runs the compiled C++ engine loop."""
 
-        # 1- Set up the callback functions to be triggered at the right moments during the simulation loop
+        # 1- Set up the callback functions to be triggered during the simulation loop
         logging.info("Starting EnergyPlus simulation for building [%s]", self.identifier)
 
         self._request_variables_before_running_simulation()
@@ -202,7 +199,7 @@ class EpSimulationRuntimeWorker:
         except BrokenBarrierError:
             sys.exit(1)
 
-        # 2- Run the simulation in EnergyPlus native C++ runtime loop, with the callbacks now hooked up and ready to go
+        # 2- Run the simulation in EnergyPlus native C++ runtime loop
         try:
             logger.info("Launching EnergyPlus engine for building: %s", self.identifier)
             # Run native C++ engine loop
@@ -229,7 +226,8 @@ class EpSimulationRuntimeWorker:
 
     def _request_variables_before_running_simulation(self):
         """
-        Request the variables to access the surface temperature of the outdoor surfaces during the simulation.
+        Request the variables to access the surface temperature of the outdoor surfaces during the
+        simulation.
         """
         for surface_name in self.outdoor_surface_names:
             self._api.exchange.request_variable(
@@ -268,8 +266,8 @@ class EpSimulationRuntimeWorker:
             raise RuntimeError(
                 f"Component Mapping Failure: Failed to retrieve API actuator handles for "
                 f"{len(missing_schedules_surfaces)} schedules in building '{self.identifier}'. "
-                f"Missing targets: {missing_schedules_surfaces}. Verify that the IDF macro injector "
-                f"appended the correct strings during the preprocessing phase."
+                f"Missing targets: {missing_schedules_surfaces}. Verify that the IDF macro "
+                f"injector appended the correct strings during the preprocessing phase."
             )
 
     def _init_surface_temperature_handlers_call_back_function(self):
@@ -284,33 +282,20 @@ class EpSimulationRuntimeWorker:
                 )
             )
 
-    def _init_surrounding_surface_schedule_handlers_call_back_function_for_testing(self):
-        """
-        Initialize the handlers to access the schedule values of the surrounding surface temperatures.
-        Should be run at the end of the warmup period.
-        For testing purposes only as it is not needed for the LWR computation.
-        """
-        for surface_name in self.outdoor_surface_names:
-            self._surrounding_surface_temperature_schedule_temperature_handler_list.append(
-                self._api.exchange.get_variable_handle(
-                    self._state,
-                    "Schedule Value",
-                    name_surrounding_surface_temperature_schedule(surface_name),
-                )
-            )
-
     # ---------------------------------------------------#
     # --- Main Callback Function and helper functions ---#
     # ---------------------------------------------------#
     def _coupled_simulation_callback_function(self):
         """
-        Function to run at the end (or beginning) of each time step, to update the schedule values and surrounding surface temperatures.
-        This function is a test version that will not perform the LWR computation but will write the surface temperatures and update the schedules
-        to test the synchronization of the shared memory and the barrier.
+        Function to run at the end (or beginning) of each time step, to update the schedule values
+        and surrounding surface temperatures.
+        This function is a test version that will not perform the LWR computation but will write
+        the surface temperatures and update the schedules to test the synchronization of the shared
+        memory and the barrier.
         :return:
         """
 
-        # prevent from runnning the function if the actuator handlers are not initialized (at warmup)
+        # prevent from runnning if the actuator handlers are not initialized (at warmup)
         if not self._schedule_actuator_handle_list:
             return
         current_time = self._api.exchange.current_sim_time(self._state)
@@ -355,7 +340,7 @@ class EpSimulationRuntimeWorker:
         try:
             """
             Wait for all other buildings to catch up to this timestep.
-            If another process has crashed, the barrier will be broken and a BrokenBarrierError will 
+            If another process has crashed, the barrier will be broken and a BrokenBarrierError will
             be raised, which is caught to exit the process cleanly instead of hanging.
             """
             self._synch_point_barrier.wait()
@@ -415,14 +400,17 @@ class EpSimulationRuntimeWorker:
 
     def _compute_srd_sur_eq_temp_in_c(self, temp_k_p4_vector: np.ndarray):
         """
-        Compute the equivalent surrounding surface temperature for each outdoor surface, using the view factors and the resolution matrix.
+        Compute the equivalent surrounding surface temperature for each outdoor surface, using
+        the view factors and the resolution matrix.
 
         Args:
-            temp_k_p4_vector: np.ndarray, vector of the surface temperatures in Kelvin to the power 4
+            temp_k_p4_vector: np.ndarray, vector of the surface temperatures in Kelvin to the
+                power 4
 
         """
 
-        # TODO: factorize the expression to avaoid unnecessary computations, need to adjust the resolution matrix expression slightly to do so
+        # TODO: factorize the expression to avaoid unnecessary computations, need to adjust
+        # the resolution matrix expression slightly to do so
 
         self._local_temp_buffer = (
             np.power(

@@ -4,17 +4,15 @@ Functions for matrix inversion
 
 import logging
 from concurrent.futures import ProcessPoolExecutor
-from typing import Annotated, Any
-
-from .._schemas.io_models import InversionConfig
+from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, Field, field_validator
 from scipy.sparse import csr_matrix, diags
 from scipy.sparse.linalg import gmres
 
-logger = logging.getLogger(__name__)
+from .._schemas.io_models import InversionConfig
 
+logger = logging.getLogger(__name__)
 
 
 def compute_full_inverse_via_gmres_parallel(
@@ -45,15 +43,16 @@ def compute_full_inverse_via_gmres_parallel(
     n: int = mtx.shape[0]
 
     # Create preconditioner if needed (Jacobi Preconditioner: inverse of diagonal)
-    M_inv = None  # Initialize M_inv to None by default, expected by gmres when no preconditioning is used
+    M_inv = None
     if config.precondition:
         M_inv = diags(1 / mtx.diagonal())
 
     # Use ProcessPoolExecutor for parallel execution
     """
-    Note: This approach actually pickels the entire matrix for each worker, which can be inefficient for large matrices.
-    For up to 25000 surfaces no substantial overhead is observed, but for larger matrices this might become a bottleneck.
-    A more efficient approach would involve shared memory or a distributed computing framework, but that adds complexity.
+    Note: This approach actually pickles the entire matrix for each worker, which can be inefficient
+    for large matrices. For up to 25000 surfaces no substantial overhead is observed, but for larger
+    matrices thismight become a bottleneck. A more efficient approach would involve shared memory 
+    or a distributed computing framework, but that adds complexity.
     """
     with ProcessPoolExecutor(max_workers=config.num_workers) as executor:
         results = list(
@@ -63,11 +62,11 @@ def compute_full_inverse_via_gmres_parallel(
             )
         )
 
-    for i, x, exitCode in results:
+    for i, _, exitCode in results:
         if exitCode != 0:
             logger.warning(f"Warning: GMRES did not converge for column {i}. Exit code: {exitCode}")
 
-    # Ensure results are sorted in column order (executor.map() preserves order, but just to be safe)
+    # Ensure results are sorted (executor.map() preserves order, but just to be safe)
     results.sort(key=lambda x: x[0])
     inverse_columns = [x[1] for x in results]
 

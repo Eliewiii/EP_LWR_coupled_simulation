@@ -113,8 +113,8 @@ class SimulationInputs(BaseModel):
 
         if v.suffix.lower() not in allowed_extensions:
             raise ValueError(
-                f"Invalid matrix file format. Expected a numpy storage file ({allowed_extensions}), "
-                f"but received '{v.name}' instead."
+                f"Invalid matrix file format. Expected a numpy storage file ({allowed_extensions}),"
+                f" but received '{v.name}' instead."
             )
         return v
 
