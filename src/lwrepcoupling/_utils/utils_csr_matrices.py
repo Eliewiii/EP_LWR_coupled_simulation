@@ -8,7 +8,8 @@ from scipy.sparse import csr_matrix, issparse, load_npz
 
 
 def read_csr_matrices_from_npz(*path_csr_matrix_npz_files: Path) -> list[Any]:
-    """Load multiple matrices from file paths, supporting both SciPy sparse .npz and dense .npy format.
+    """Load multiple matrices from file paths, supporting both SciPy sparse .npz and dense
+      .npy format.
 
     Args:
         path_csr_matrix_npz_files: Variadic list of Paths to matrix tracking files.

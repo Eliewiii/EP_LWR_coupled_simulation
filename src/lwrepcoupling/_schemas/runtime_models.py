@@ -23,7 +23,8 @@ class CompiledBuildingState(BaseModel):
         building_id: Unique alphanumeric string identifying the building.
         building_index: Zero-indexed matrix positioning tracker for parallel execution loops.
         num_surfaces: The count of participating outdoor surfaces belonging to this building.
-        surface_index_min: The global starting row/column offset index in the master radiation matrix.
+        surface_index_min: The global starting row/column offset index in the master radiation
+          matrix.
         surface_index_max: The global ending row/column offset index in the master radiation matrix.
         outdoor_surface_names: Explicit ordered list of surface names matching the matrix indices.
     """
@@ -88,10 +89,14 @@ class SimulationManifest(BaseModel):
         workspace_dir: The active absolute path hosting the compiled workspace root directory.
         epw_file_name: Local filename string of the climate profile asset stored in the workspace.
         num_ts_per_h: Number of simulation timesteps per hour mapped across the execution loop.
-        num_total_surfaces: Overall aggregate global surface dimension for the master tracking matrices.
-        compiled_buildings: Catalog containing structural boundary mapping states for the parallel workers.
-        save_resolution_matrix: Configuration toggle to permanently commit the inverted matrix to disk.
-        enable_lwr_coupling: Configuration toggle to activate or deactivate the shared-memory physics callbacks.
+        num_total_surfaces: Overall aggregate global surface dimension for the master tracking
+          matrices.
+        compiled_buildings: Catalog containing structural boundary mapping states for the parallel
+          workers.
+        save_resolution_matrix: Configuration toggle to permanently commit the inverted matrix to
+          disk.
+        enable_lwr_coupling: Configuration toggle to activate or deactivate the shared-memory
+          physics callbacks.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -265,12 +270,17 @@ class EpSimulationRuntimeConfig(BaseModel):
         epw_path: Absolute path to the climate profile asset assigned to this execution loop.
         num_ts_per_h: Number of simulation timesteps per hour executed inside the sandbox.
         runs_dir: Path to the target root runs directory housing the compiled building folders.
-        num_buildings: Total count of active buildings managed concurrently within this execution batch.
+        num_buildings: Total count of active buildings managed concurrently within this execution
+          batch.
         num_total_surfaces: Aggregate global surface count across all running building nodes.
-        shared_memory_temperatures_name: The unique string handle referencing the shared surface temperature buffer.
-        shared_memory_timesteps_name: The unique string handle referencing the shared synchronization timestep tracker.
-        synch_point_barrier: The multiprocessing Barrier instance enforcing lockstep runtime synchronization.
-        enable_lwr_coupling: Configuration toggle to activate or deactivate the shared-memory physics callbacks.
+        shared_memory_temperatures_name: The unique string handle referencing the shared surface
+          temperature buffer.
+        shared_memory_timesteps_name: The unique string handle referencing the shared
+          synchronization timestep tracker.
+        synch_point_barrier: The multiprocessing Barrier instance enforcing lockstep runtime
+          synchronization.
+        enable_lwr_coupling: Configuration toggle to activate or deactivate the shared-memory
+          physics callbacks.
     """
 
     # Allow arbitrary types so the multiprocessing Barrier passes validation gates
