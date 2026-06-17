@@ -219,3 +219,7 @@ __marimo__/
 
 # --- VS Code ---
 .vscode/*
+
+# Debug 
+.debug_artifacts
+.tmp_ep_inspect.py

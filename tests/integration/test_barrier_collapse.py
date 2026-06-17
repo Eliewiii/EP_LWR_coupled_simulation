@@ -50,6 +50,7 @@ def test_real_parallel_processes_abort_barrier_on_missing_matrix_file(
         num_ts_per_h=4,
         num_total_surfaces=4,
         save_resolution_matrix=False,
+        enable_lwr_coupling=True,
         compiled_buildings=[building_0_state, building_1_state],
     )
 

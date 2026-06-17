@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class SurfaceAddStringConfig(BaseModel):
     surface_name: Annotated[str, Field(min_length=1)]
-    cumulated_ext_surf_view_factor: Annotated[float, Field(gt=0, le=1)]
+    cumulated_ext_surf_view_factor: Annotated[float, Field(ge=0, le=1)]
     sky_view_factor: Annotated[float | None, Field(ge=0, le=1)] = None
     ground_view_factor: Annotated[float | None, Field(ge=0, le=1)] = None
     ground_temperature_schedule: str = ""

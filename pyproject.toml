@@ -25,12 +25,23 @@ log_cli = true
 log_cli_level = "INFO"
 addopts = "-v --tb=short"
 markers = [
-    "integration: Marks tests as slow, multi-process integration or system-level suites."
+    "integration: Marks tests as slow, multi-process integration or system-level suites.",
+    "system: Marks very slow simulation tests of the whole workflow for simple cases.",
+    "simulation: Marks slow simulation tests of the whole workflow for more complex cases.",
+    "debug: Marks tests that are used for debugging and development purposes, not for regular test runs."
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+exclude = [
+    ".venv",
+    "venv",
+    "*.epw",
+    "*.eso",
+    "*.csv",
+    "*.idf"
+]
 
 [tool.ruff.lint]
 # E: Error, F: Pyflakes, B: Bugbear

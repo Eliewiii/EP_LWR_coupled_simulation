@@ -50,7 +50,7 @@ def test_surface_add_string_config_invalid_sum_throws() -> None:
     "field_name, invalid_value",
     [
         ("surface_name", ""),  # Min length constraint
-        ("cumulated_ext_surf_view_factor", 0.0),  # Must be gt=0
+        ("cumulated_ext_surf_view_factor", -0.1),  # Must be gt=0
         ("cumulated_ext_surf_view_factor", 1.05),  # Must be le=1
         ("sky_view_factor", -0.1),  # Must be ge=0
         ("ground_view_factor", 1.2),  # Must be le=1

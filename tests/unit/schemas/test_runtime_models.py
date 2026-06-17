@@ -35,6 +35,7 @@ def valid_manifest_data(tmp_path: Path) -> dict:
         "num_ts_per_h": 4,
         "num_total_surfaces": 5,
         "save_resolution_matrix": False,
+        "enable_lwr_coupling": True,
         "compiled_buildings": [
             CompiledBuildingState(
                 building_id="b_0",
@@ -172,5 +173,6 @@ def test_runtime_config_arbitrary_types_allowed(tmp_path: Path) -> None:
         shared_memory_temperatures_name="mem_temp",
         shared_memory_timesteps_name="mem_ts",
         synch_point_barrier=mock_barrier,
+        enable_lwr_coupling=True
     )
     assert isinstance(config.synch_point_barrier, SynchronizerBarrier)

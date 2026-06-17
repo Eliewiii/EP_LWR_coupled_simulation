@@ -159,8 +159,9 @@ class EpLwrSimulationManager:
             epw_file_name=inputs.epw_path.name,
             num_ts_per_h=inputs.num_ts_per_h,
             num_total_surfaces=inputs.num_total_surfaces,
-            save_resolution_matrix=inputs.save_resolution_matrix,
             compiled_buildings=compiled_buildings_list,
+            save_resolution_matrix=inputs.save_resolution_matrix,
+            enable_lwr_coupling=inputs.enable_lwr_coupling,
         )
         cls._verify_workspace_integrity(manifest)
         manifest.write_to_disk()
@@ -250,10 +251,12 @@ class EpLwrSimulationManager:
 
         # Slice and commit the optimized dense array segment to disk
         building_matrix_slice = resolution_mtx[min_surface_index : max_surface_index + 1, :]
+        # .toarray() unwraps the SciPy sparse structure into a pristine, dense float64 array
+        dense_matrix_array = building_matrix_slice.toarray()
         building_res_matrix_path = CompiledBuildingState.derive_sub_mtx_path(
             runs_dir, building_index
         )
-        np.save(building_res_matrix_path, building_matrix_slice)
+        np.save(building_res_matrix_path, dense_matrix_array)
 
         # Inject additional physics strings to target geometry description layout
         building_vf_srd_slice = total_srd_vf_list[min_surface_index : max_surface_index + 1]
@@ -559,6 +562,7 @@ class EpLwrSimulationManager:
                         shared_memory_temperatures_name=shm_temperatures.name,
                         shared_memory_timesteps_name=shm_timesteps.name,
                         synch_point_barrier=synch_point_barrier,
+                        enable_lwr_coupling=self._manifest.enable_lwr_coupling,
                     )
                     p = ctx.Process(
                         target=EpSimulationRuntimeWorker.run_coupled_simulation,

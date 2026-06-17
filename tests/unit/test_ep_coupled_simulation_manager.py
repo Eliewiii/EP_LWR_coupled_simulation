@@ -31,6 +31,7 @@ def mock_manifest(tmp_path: Path) -> SimulationManifest:
         num_ts_per_h=4,
         num_total_surfaces=4,
         save_resolution_matrix=False,
+        enable_lwr_coupling=True,
         compiled_buildings=[
             CompiledBuildingState(
                 building_id="b_0",

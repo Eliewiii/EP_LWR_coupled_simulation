@@ -51,7 +51,15 @@ def generate_idfs_additional_strings(
         ValueError : if there are inconsistency in the sum of VF on surfaces
 
     """
-    additional_strings = ""
+    additional_strings = (
+        "\n"
+        "ScheduleTypeLimits,"
+        "  TEMPERATURE,                             !- Name\n"
+        "  -273,                                    !- Lower Limit Value\n"
+        "  ,                                        !- Upper Limit Value\n"
+        "  Continuous,                              !- Numeric Type\n"
+        "  Temperature;                             !- Unit Type\n"
+    )
     for i, surface_name in enumerate(outdoor_surface_names):
         add_string_config = SurfaceAddStringConfig(
             surface_name=surface_name,

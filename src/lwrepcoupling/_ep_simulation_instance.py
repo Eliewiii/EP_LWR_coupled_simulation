@@ -160,6 +160,7 @@ class EpSimulationRuntimeWorker:
                 epw_path=config.epw_path,
                 output_dir=output_dir,
                 idf_path=idf_path,
+                enable_lwr_coupling=config.enable_lwr_coupling,
             )
 
         except Exception as e:
@@ -169,30 +170,30 @@ class EpSimulationRuntimeWorker:
         return exit_code
 
     def execute(
-        self,
-        epw_path: Path,
-        output_dir: Path,
-        idf_path: Path,
+        self, epw_path: Path, output_dir: Path, idf_path: Path, enable_lwr_coupling: bool
     ) -> int:
         """Hooks up closures and runs the compiled C++ engine loop."""
 
         # 1- Set up the callback functions to be triggered during the simulation loop
         logging.info("Starting EnergyPlus simulation for building [%s]", self.identifier)
 
-        self._request_variables_before_running_simulation()
+        if enable_lwr_coupling:
+            self._request_variables_before_running_simulation()
 
-        self._api.runtime.callback_begin_new_environment(
-            self._state,
-            self._initialize_actuator_handler_callback_function,  # type: ignore
-        )
-        self._api.runtime.callback_begin_new_environment(
-            self._state,
-            self._init_surface_temperature_handlers_call_back_function,  # type: ignore
-        )
-        self._api.runtime.callback_end_zone_timestep_after_zone_reporting(
-            self._state,
-            self._coupled_simulation_callback_function,  # type: ignore
-        )
+            self._api.runtime.callback_begin_new_environment(
+                self._state,
+                self._initialize_actuator_handler_callback_function,  # type: ignore
+            )
+            self._api.runtime.callback_begin_new_environment(
+                self._state,
+                self._init_surface_temperature_handlers_call_back_function,  # type: ignore
+            )
+            self._api.runtime.callback_end_zone_timestep_after_zone_reporting(
+                self._state,
+                self._coupled_simulation_callback_function,  # type: ignore
+            )
+        else:
+            logger.info("Running in isolated, DECOUPLED mode.")
 
         try:
             self._synch_point_barrier.wait()
@@ -238,7 +239,7 @@ class EpSimulationRuntimeWorker:
     # --- Initialize Variable Request and Init Callback Functions ---#
     # ---------------------------------------------------------------#
 
-    def _initialize_actuator_handler_callback_function(self) -> None:
+    def _initialize_actuator_handler_callback_function(self, state_argument: Any) -> None:
         """Initialize the actuator handlers for the surrounding surface temperature schedules.
 
         Should be run at the end of the warmup period or beginning of environment.
@@ -270,7 +271,7 @@ class EpSimulationRuntimeWorker:
                 f"injector appended the correct strings during the preprocessing phase."
             )
 
-    def _init_surface_temperature_handlers_call_back_function(self):
+    def _init_surface_temperature_handlers_call_back_function(self, state_argument: Any) -> None:
         """
         Initialize the handlers to access the surface temperatures of the outdoor surfaces.
         Should be run at the end of the warmup period.
@@ -285,7 +286,7 @@ class EpSimulationRuntimeWorker:
     # ---------------------------------------------------#
     # --- Main Callback Function and helper functions ---#
     # ---------------------------------------------------#
-    def _coupled_simulation_callback_function(self):
+    def _coupled_simulation_callback_function(self, state_argument: Any) -> None:
         """
         Function to run at the end (or beginning) of each time step, to update the schedule values
         and surrounding surface temperatures.

@@ -37,7 +37,12 @@ jobs:
           annotate: all
           warnings: false
           lib: false
-          no-comments: false
       # Test Runner (Pytest)
       - name: Run Tests (Pytest)
-        run: pytest
+        run: pytest -m "not system and not debug and not simulation"
+        
+      - name: Run Heavy System-Level Box Simulations
+        run: pytest -m system
+
+      - name: Run Heavy System-Level Box Simulations
+        run: pytest -m simulation
