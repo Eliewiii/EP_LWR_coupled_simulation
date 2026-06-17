@@ -41,7 +41,8 @@ class InversionConfig(BaseModel):
             ge=1e-10,
             le=1e-5,
             description=(
-                "Relative tolerance stopping criterion representing residual reduction scaling limits."
+                "Relative tolerance stopping criterion representing residual reduction scaling"
+                " limits."
             ),
         ),
     ] = 5e-7
@@ -49,7 +50,8 @@ class InversionConfig(BaseModel):
     precondition: bool = Field(
         default=False,
         description=(
-            "Toggle to dynamically construct a Jacobi Preconditioner to accelerate convergence speeds."
+            "Toggle to dynamically construct a Jacobi Preconditioner to accelerate convergence"
+            " speeds."
         ),
     )
 
@@ -66,7 +68,8 @@ class InversionConfig(BaseModel):
             ge=0,
             le=60,
             description=(
-                "Parallel CPU allocation target. Setting to 0 automatically provisions all available cores."
+                "Parallel CPU allocation target. Setting to 0 automatically provisions all"
+                " available cores."
             ),
         ),
     ] = 1
@@ -93,7 +96,8 @@ class BuildingInput(BaseModel):
 
     idf_path: FilePath = Field(
         description=(
-            "Absolute filesystem path to the building's EnergyPlus input data dictionary (.idf) file."
+            "Absolute filesystem path to the building's EnergyPlus input data dictionary (.idf) "
+            "file."
         )
     )
 
@@ -121,8 +125,8 @@ class SimulationInputs(BaseModel):
 
     workspace_dir: DirectoryPath = Field(
         description=(
-            "Target root directory path where the runtime folders, matrices, and simulation sandboxes "
-            "will be built."
+            "Target root directory path where the runtime folders, matrices, and simulation "
+            "sandboxes will be built."
         )
     )
 
@@ -134,35 +138,35 @@ class SimulationInputs(BaseModel):
 
     num_ts_per_h: int = Field(
         description=(
-            "Number of simulation time steps per hour. This must match the internal frequency defined "
-            "in the building IDFs."
+            "Number of simulation time steps per hour. This must match the internal frequency"
+            " defined in the building IDFs."
         )
     )
 
     vf_matrix_path: FilePath = Field(
         description=(
-            "Absolute filesystem path to the computed geometric View Factor (.npy/.npz) sparse matrix "
-            "file."
+            "Absolute filesystem path to the computed geometric View Factor (.npy/.npz) sparse"
+            " matrix file."
         )
     )
 
     eps_matrix_path: FilePath = Field(
         description=(
-            "Absolute filesystem path to the computed material Emissivity surface properties vector "
-            "data file."
+            "Absolute filesystem path to the computed material Emissivity surface properties vecto "
+            " data file."
         )
     )
 
     rho_matrix_path: FilePath = Field(
         description=(
-            "Absolute filesystem path to the computed diffuse Reflectivity structural surface matrix "
-            "data file."
+            "Absolute filesystem path to the computed diffuse Reflectivity structural surface "
+            "matrix data file."
         )
     )
 
     tau_matrix_path: FilePath = Field(
         description=(
-            "Absolute filesystem path to the computed material Transmissivity shortwave matrix data "
+            "Absolute filesystem path to the computed material Transmissivity shortwave matrix data"
             "file."
         )
     )
@@ -177,23 +181,24 @@ class SimulationInputs(BaseModel):
 
     buildings: list[BuildingInput] = Field(
         description=(
-            "A structured assembly containing the raw input layouts and configuration states for all "
-            "buildings."
+            "A structured assembly containing the raw input layouts and configuration states for "
+            " all buildings."
         )
     )
 
     save_resolution_matrix: bool = Field(
         default=False,
         description=(
-            "Toggle to explicitly commit the full assembled master resolution mapping matrix (.npz) to "
-            "the disk space."
+            "Toggle to explicitly commit the full assembled master resolution mapping matrix (.npz)"
+            " to the disk space."
         ),
     )
     enable_lwr_coupling: bool = Field(
         default=True,
         description=(
             "If True, activates the shared-memory synchronization loop to dynamically couple "
-            "inter-building long-wave radiation exchange. If False, buildings run completely uncoupled."
+            "inter-building long-wave radiation exchange. If False, buildings run completely "
+            "uncoupled."
         ),
     )
 
