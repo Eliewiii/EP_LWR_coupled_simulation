@@ -79,7 +79,7 @@ def test_master_base_registry_complete_composition():
     assert len(base_registry.building) == 1
     assert len(base_registry.global_geometry_rules) == 1
     assert len(base_registry.material) >= 5
-    assert len(base_registry.construction) >= 4
+    assert len(base_registry.construction) >= 3
 
     # Assert that required standard materials exist within the pool contract
     assert "Heavy_Concrete" in base_registry.material

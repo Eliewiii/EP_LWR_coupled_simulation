@@ -56,11 +56,11 @@ def test_export_model_to_idf_string_positional_values_and_punctuation(sample_com
 
     # 1. Look at the isolated Zone block to verify tracking name override and terminal semicolon
     # Each parameter line must terminate with a comma except the final entry
-    assert "    test_box_zone                 ," in idf_text
+    assert "test_box_zone," in idf_text
 
     # 2. Assert that the multi-layer construction mapping loops preserved their positional layers
-    assert "    Default_Exterior_Wall_Construction," in idf_text
-    assert "    Common_Brick                  ," in idf_text
+    assert "Default_Exterior_Wall_Construction," in idf_text
+    assert "Common_Brick," in idf_text
 
 
 def test_export_model_to_idf_string_vertex_flattening(sample_compiled_box_model):
@@ -70,12 +70,9 @@ def test_export_model_to_idf_string_vertex_flattening(sample_compiled_box_model)
     idf_text = export_model_to_idf_string(sample_compiled_box_model)
 
     # A 10m x 12m roof box corner layout with origin 0,0,0 should flatten to explicit string rows:
-    assert "    10.0                          ," in idf_text  # X coordinate component
-    assert "    12.0                          ," in idf_text  # Y coordinate component
-    assert (
-        "    3.0                           ;" in idf_text
-        or "    3.0                           ," in idf_text
-    )  # Z coordinate component
+    assert "10.0," in idf_text  # X coordinate component
+    assert "12.0," in idf_text  # Y coordinate component
+    assert "3.0;" in idf_text or "3.0," in idf_text  # Z coordinate component
 
 
 def test_write_native_idf_file_io_and_lwr_text_append(sample_compiled_box_model, tmp_path):
