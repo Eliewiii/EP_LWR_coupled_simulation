@@ -11,7 +11,7 @@
 ![Pyright](https://img.shields.io/badge/Types-Pyright-3178C6?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 
-**LWR-EPCoupling** is a high-performance Python framework designed to bridge the gap between individual building energy models and district-scale radiative reality. By leveraging the **EnergyPlus API** through the standard `pyenergyplus` package, it enables synchronized, multi-building simulations that account for inter-building long-wave radiation (LWR) exchanges in real-time.
+**LWR-EPCoupling** is a high-performance Python framework designed to bridge the gap between individual building energy models and district-scale radiative reality. By leveraging the **EnergyPlus API** through the standard `pyenergyplus` package, it enables synchronized, multi-building simulations that account for inter-building long-wave radiation (LWR) exchanges in real-time. Simulations can handle over 100 buildings.
 
 ---
 
