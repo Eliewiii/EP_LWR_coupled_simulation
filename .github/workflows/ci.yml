@@ -2,9 +2,9 @@ name: CI - Lint, Type Integrity and Test
 
 on:
   push:
-    branches: [ main, feature/reoganize_better_practices ]
+    branches: [ master, feature/reoganize_better_practices ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 jobs:
   test-and-lint:
